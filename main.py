@@ -5,7 +5,7 @@ import re
 from playwright.sync_api import sync_playwright
 
 def run_kakao_realtime_rank():
-    print("🚀 카카오페이지 [최종 완결판] 수집 시작...")
+    print("🚀 카카오페이지 [순위 고정 + 장르 복구] 수집 시작...")
     
     try:
         creds_json = os.environ['GOOGLE_CREDENTIALS']
@@ -13,7 +13,6 @@ def run_kakao_realtime_rank():
         gc = gspread.service_account_from_dict(creds)
         sheet_id = "1c2ax0-3t70NxvxL-cXeOCz9NYnSC9OhrzC0IOWSe5Lc" 
         sh = gc.open_by_key(sheet_id).sheet1
-        print("✅ 구글 시트 연결 성공")
     except Exception as e:
         print(f"❌ 시트 연결 실패: {e}")
         return
@@ -28,68 +27,62 @@ def run_kakao_realtime_rank():
             page.goto(url, wait_until="networkidle")
             page.wait_for_timeout(5000)
             
-            # 스크롤을 여유 있게 해서 모든 카드를 로드합니다.
-            for _ in range(3):
-                page.mouse.wheel(0, 2000)
-                page.wait_for_timeout(2000)
-
-            # [수정] 랭킹 리스트의 '링크'만 먼저 정확히 순서대로 뽑습니다.
-            # 이 순서가 곧 실제 실시간 순위입니다.
-            links = page.eval_on_selector_all('a[href*="/content/"]', 
-                'elements => elements.map(e => e.href)')
+            # 메인 화면에서 작품 카드들(링크)을 순서대로 수집 (초기 방식)
+            items = page.query_selector_all('a[href*="/content/"]')
             
-            # 중복 제거 (카카오 특성상 같은 링크가 두 번 잡힐 수 있음)
-            unique_links = []
-            for link in links:
-                if link not in unique_links:
-                    unique_links.append(link)
-            
-            print(f"🔎 총 {len(unique_links[:20])}개의 작품을 순서대로 분석합니다.")
+            # 중복 제거 및 상위 20개 링크 추출
+            target_links = []
+            seen = set()
+            for item in items:
+                href = page.evaluate("el => el.href", item)
+                if href not in seen:
+                    target_links.append(href)
+                    seen.add(href)
+                if len(target_links) >= 20: break
 
             data_to_push = [["순위", "타이틀", "작가", "장르", "조회수", "수집일"]]
             
-            for i, link in enumerate(unique_links[:20]):
+            # 이제 수집된 링크를 '순서대로' 방문하며 상세 정보 수집
+            for i, link in enumerate(target_links):
                 try:
                     detail_page = context.new_page()
                     detail_page.goto(link, wait_until="networkidle")
                     detail_page.wait_for_timeout(2000)
 
-                    # 1. 타이틀
+                    # [1] 타이틀 (메타데이터 활용)
                     title = detail_page.locator('meta[property="og:title"]').get_attribute("content")
                     
-                    # 2. 작가 (정밀 클래스 타겟팅)
+                    # [2] 작가 (사용자님이 알려주신 클래스 우선)
+                    author = "-"
                     author_el = detail_page.locator('span.text-el-70.opacity-70').first
-                    author = author_el.inner_text().strip() if author_el.count() > 0 else "-"
-                    
-                    # 3. 장르 (모든 텍스트에서 '웹소설'이 포함된 span을 찾아 정제)
+                    if author_el.count() > 0:
+                        author = author_el.inner_text().strip()
+
+                    # [3] 장르 (초기 성공 방식: '웹소설' 포함 텍스트 찾기)
                     genre = "-"
-                    # 페이지 내 모든 span을 검사하여 '웹소설' 단어가 있는 것을 찾음
-                    genre_candidates = detail_page.locator('span:has-text("웹소설")').all_inner_texts()
-                    if genre_candidates:
-                        # 가장 첫 번째 후보에서 정제
-                        raw_genre = genre_candidates[0]
-                        genre = raw_genre.replace("웹소설", "").replace("·", "").replace(" ", "").strip()
+                    all_text_list = detail_page.evaluate("() => Array.from(document.querySelectorAll('span')).map(s => s.innerText)")
+                    for text in all_text_list:
+                        if "웹소설" in text:
+                            genre = text.replace("웹소설", "").replace("·", "").replace(" ", "").strip()
+                            break
                     
-                    # 4. 조회수
-                    view_match = re.search(r'(\d+\.?\d*[만|억])', detail_page.evaluate("() => document.body.innerText"))
+                    # [4] 조회수
+                    body_text = detail_page.evaluate("() => document.body.innerText")
+                    view_match = re.search(r'(\d+\.?\d*[만|억])', body_text)
                     views = view_match.group(1) if view_match else "-"
 
-                    # i+1을 사용하여 화면 순서 그대로 순위를 매깁니다.
                     data_to_push.append([f"{i+1}위", title, author, genre, views, "2026-02-24"])
-                    print(f"✅ {i+1}위 수집: {title} | {genre}")
+                    print(f"✅ {i+1}위 완료: {title}")
                     
                     detail_page.close()
                 except Exception as e:
-                    print(f"⚠️ {i+1}위 오류 발생: {e}")
+                    print(f"⚠️ {i+1}위 수집 중 오류: {e}")
                     continue
 
-            # 3. 시트 업데이트
-            if len(data_to_push) > 1:
-                sh.clear()
-                sh.update('A1', data_to_push)
-                print("🎊 시트 업데이트가 완벽하게 끝났습니다!")
-            else:
-                print("❌ 수집된 데이터가 없습니다.")
+            # 시트 업데이트
+            sh.clear()
+            sh.update('A1', data_to_push)
+            print("🎊 요청하신 대로 순위와 장르 로직을 보정하여 업데이트를 완료했습니다!")
 
         except Exception as e:
             print(f"❌ 에러: {e}")
