@@ -21,7 +21,7 @@ def run_total_ranking():
 
     with sync_playwright() as p:
         # 💡 네이버 수집을 위해 이번에는 headless=False로 시도해보는 것을 권장합니다.
-        browser = p.chromium.launch(headless=True) 
+        browser = p.chromium.launch(headless=False) 
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
 
         # --- [STEP 1] 카카오페이지 수집 ---
