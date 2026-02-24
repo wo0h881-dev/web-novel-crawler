@@ -16,7 +16,8 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          playwright install chromium
+          # [중요] --with-deps를 추가해야 리눅스 환경에서 브라우저가 정상 작동합니다.
+          playwright install chromium --with-deps 
       - name: Run Crawler
         run: python main.py
         env:
