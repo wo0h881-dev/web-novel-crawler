@@ -108,7 +108,7 @@ def run_total_ranking():
 
     with sync_playwright() as p:
         # 1. 브라우저 실행 시 봇 감지 우회 옵션 추가
-        browser = p.chromium.launch(headless=True) # 여전히 0개면 False로 바꿔보세요!
+        browser = p.chromium.launch(headless=False) # 여전히 0개면 False로 바꿔보세요!
         
         # 2. 컨텍스트 설정 (화면 크기, 언어, 유저에이전트를 실제 사람처럼 설정)
         context = browser.new_context(
