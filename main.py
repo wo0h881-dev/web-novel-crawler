@@ -48,80 +48,95 @@ def get_kakao_data(context):
     page.close()
     return data
 
-# --- [네이버 수집 함수] ---
+# --- [네이버 수집 함수: 정밀 보정 버전] ---
 def get_naver_data(context):
-    print("      네이버 시리즈 수집 중...")
+    print("      네이버 시리즈 수집 시작...")
     data = []
     page = context.new_page()
+    # 실시간 전체 랭킹 리스트 페이지
     url = "https://series.naver.com/novel/top100List.series?rankingTypeCode=REALTIME&categoryCode=ALL"
     
     try:
         page.goto(url, wait_until="networkidle")
         page.wait_for_timeout(3000)
         
-        # 리스트 아이템 추출
+        # 작품 리스트 아이템 추출
         items = page.locator('ul.lst_list > li').all()
+        print(f"      발견된 네이버 작품 수: {len(items)}개")
         
         for i, item in enumerate(items[:20]):
             try:
-                title = item.locator('h3 > a').inner_text().strip()
+                # 1. 리스트에서 기본 정보 추출
+                title_el = item.locator('h3 > a')
+                title = title_el.inner_text().strip()
                 author = item.locator('span.author').inner_text().strip()
                 thumbnail = item.locator('img').get_attribute("src")
                 genre = item.locator('span.genre').inner_text().strip() if item.locator('span.genre').count() > 0 else "-"
                 
-                # 네이버 상세페이지 진입 (조회수 수집용)
-                detail_url = "https://series.naver.com" + item.locator('h3 > a').get_attribute('href')
-                d_page = context.new_page()
-                d_page.goto(detail_url, wait_until="networkidle")
+                # 2. 상세 페이지 주소 추출 및 조립
+                href = title_el.get_attribute('href')
+                detail_url = f"https://series.naver.com{href}"
                 
-                # 상세페이지 내 조회수 (예: 40.4만)
+                # 3. 상세 페이지로 이동하여 조회수 수집
+                d_page = context.new_page()
+                d_page.goto(detail_url, wait_until="domcontentloaded") # 로딩 속도 최적화
+                d_page.wait_for_timeout(2000)
+                
+                # 조회수 추출 (사용자님이 주신 <span>40.4만</span> 구조 공략)
                 views = "-"
-                # '만' 혹은 '억'이 포함된 span을 찾거나 전체 텍스트에서 검색
-                all_text = d_page.evaluate("() => document.body.innerText")
-                view_match = re.search(r'(\d+\.?\d*[만|억])', all_text)
+                # 상세 페이지 전체에서 '만' 혹은 '억'이 들어간 숫자를 찾습니다.
+                content = d_page.content()
+                view_match = re.search(r'<span>(\d+\.?\d*[만|억])</span>', content)
+                
                 if view_match:
                     views = view_match.group(1)
+                else:
+                    # 만약 위 정규식으로 안 잡힐 경우, 텍스트 전체에서 재검색
+                    all_text = d_page.evaluate("() => document.body.innerText")
+                    alt_match = re.search(r'(\d+\.?\d*[만|억])', all_text)
+                    if alt_match:
+                        views = alt_match.group(1)
                 
                 data.append([f"{i+1}위", "네이버 시리즈", title, author, genre, views, thumbnail, "2026-02-25"])
+                print(f"      ✅ 네이버 {i+1}위 성공: {title} ({views})")
                 d_page.close()
-                print(f"      ✅ 네이버 {i+1}위 완료: {title} ({views})")
-            except: continue
+            except Exception as e:
+                print(f"      ⚠️ {i+1}위 상세 수집 중 건너뜀: {e}")
+                continue
     except Exception as e:
-        print(f"❌ 네이버 에러: {e}")
+        print(f"❌ 네이버 접속 에러: {e}")
+    
     page.close()
     return data
 
-# --- [메인 실행 함수] ---
+# --- [통합 실행 함수: 카카오 함수가 있다면 여기 합치기] ---
 def run_total_ranking():
-    print("🚀 [카카오 x 네이버] 통합 랭킹 수집 시작...")
+    print("🚀 통합 랭킹 수집 프로세스 시작...")
     
     try:
         creds = json.loads(os.environ['GOOGLE_CREDENTIALS'])
         gc = gspread.service_account_from_dict(creds)
-        # ⚠️ 본인의 시트 ID로 꼭 확인하세요!
-        sh = gc.open_by_key("1c2ax0-3t70NxvxL-cXeOCz9NYnSC9OhrzC0IOWSe5Lc").sheet1
+        sh = gc.open_by_key("여기에_시트_고유_ID_입력").sheet1
     except Exception as e:
-        print(f"❌ 시트 연결 실패: {e}"); return
+        print(f"❌ 구글 시트 연결 실패: {e}")
+        return
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
         
-        # 1. 카카오 수집
-        kakao_data = get_kakao_data(context)
+        # 1. 네이버 데이터 수집 (카카오가 필요하면 여기에 get_kakao_data(context) 추가)
+        naver_results = get_naver_data(context)
         
-        # 2. 네이버 수집
-        naver_data = get_naver_data(context)
-        
-        # 3. 데이터 합치기
+        # 2. 헤더 및 데이터 병합
         header = [["순위", "플랫폼", "타이틀", "작가", "장르", "조회수", "썸네일", "수집일"]]
-        final_data = header + kakao_data + naver_data
+        final_list = header + naver_results # 카카오가 있다면 중간에 추가
         
-        # 4. 시트 업데이트
+        # 3. 시트 기록
         sh.clear()
-        sh.update('A1', final_data)
+        sh.update('A1', final_list)
+        print(f"🎊 완료! 총 {len(naver_results)}개의 네이버 데이터가 반영되었습니다.")
         
-        print(f"🎊 모든 데이터 수집 완료! (총 {len(final_data)-1}건)")
         browser.close()
 
 if __name__ == "__main__":
