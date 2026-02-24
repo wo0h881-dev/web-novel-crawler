@@ -17,7 +17,7 @@ def run_kakao_realtime_rank():
         creds = json.loads(creds_json)
         gc = gspread.service_account_from_dict(creds)
         # 본인의 시트 ID를 여기에 꼭 넣으세요!
-        sheet_id = "여기에_시트_고유_ID를_넣으세요" 
+        sheet_id = "1c2ax0-3t70NxvxL-cXeOCz9NYnSC9OhrzC0IOWSe5Lc" 
         sh = gc.open_by_key(sheet_id).sheet1
     except Exception as e:
         print(f"❌ 시트 연결 중 에러 발생: {e}")
