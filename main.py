@@ -4,7 +4,7 @@ import gspread
 from playwright.sync_api import sync_playwright
 
 def run_kakao_realtime_rank():
-    print("🚀 카카오페이지 [실시간 랭킹] 마지막 승부 수집 시작...")
+    print("🚀 카카오페이지 [실시간 랭킹] 상세 데이터(작가/조회수) 수집 시작...")
     
     try:
         creds_json = os.environ['GOOGLE_CREDENTIALS']
@@ -19,7 +19,6 @@ def run_kakao_realtime_rank():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        # 실제 사용자처럼 보이게 설정을 더 강화합니다.
         context = browser.new_context(
             viewport={'width': 1280, 'height': 1024},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -28,61 +27,64 @@ def run_kakao_realtime_rank():
         
         try:
             url = "https://page.kakao.com/menu/10011/screen/94"
-            print(f"🔗 접속 중: {url}")
-            page.goto(url, wait_until="networkidle", timeout=60000)
+            page.goto(url, wait_until="networkidle")
             
-            # [수정 1] 아주 천천히 스크롤하며 데이터가 로드될 시간을 줍니다.
-            print("⏳ 데이터 로딩을 위해 스크롤 중...")
-            for i in range(5):
-                page.mouse.wheel(0, 800)
-                page.wait_for_timeout(2000) 
-
-            # [수정 2] 클래스명에만 의존하지 않고, 모든 '작품 링크'를 뒤집니다.
-            # 카카오 소설은 항상 /content/ 로 시작하는 링크를 가집니다.
+            # 데이터 로딩 대기
+            for _ in range(5):
+                page.mouse.wheel(0, 1000)
+                page.wait_for_timeout(1500)
+            
+            # 각 작품 카드(링크)를 가져옵/니다.
             items = page.query_selector_all('a[href*="/content/"]')
-            print(f"🔎 발견된 작품 링크 수: {len(items)}개")
-
-            data_to_push = [["순위", "변동", "타이틀", "작가", "수집일"]]
+            
+            # 헤더에 '조회수' 추가
+            data_to_push = [["순위", "변동", "타이틀", "작가", "조회수", "수집일"]]
             seen_titles = set()
             rank_counter = 1
 
-            # 제외할 노이즈 (최소한으로 줄임)
-            noise_list = ["다크 모드", "Top 300", "설정", "고객센터"]
+            noise_list = ["다크 모드", "Top 300", "설정", "고객센터", "오늘의 PICK"]
 
             for item in items:
                 try:
-                    # <a> 태그 안의 텍스트를 몽땅 가져와서 분석
+                    # 카드 내부의 모든 텍스트 추출
                     raw_text = item.inner_text().strip()
                     lines = [t.strip() for t in raw_text.split('\n') if t.strip()]
                     
                     if len(lines) < 1: continue
 
-                    # 보통 구조: [순위, 제목, 작가, ...] 또는 [제목, 작가, ...]
-                    # 제목 후보를 찾습니다.
+                    # 1. 제목 찾기 (숫자 아니고 노이즈 아닌 첫 줄)
                     title = ""
-                    for line in lines:
+                    title_idx = -1
+                    for idx, line in enumerate(lines):
                         if len(line) > 1 and not line.isdigit() and line not in noise_list:
                             title = line
+                            title_idx = idx
                             break
                     
                     if not title or title in seen_titles: continue
 
-                    # 순위 변동 아이콘
+                    # 2. 순위 변동 아이콘
                     change_img = item.query_selector('img[alt="유지"], img[alt="상승"], img[alt="하락"]')
                     change = change_img.get_attribute("alt") if change_img else "-"
 
-                    # 작가 정보 (제목 바로 다음 줄인 경우가 많음)
-                    author = "정보 확인중"
-                    for i, line in enumerate(lines):
-                        if line == title and i + 1 < len(lines):
-                            author = lines[i+1]
-                            break
+                    # 3. 작가명 및 조회수 정밀 추출
+                    # 보통 제목(title_idx) 뒤에 [작가명, 조회수] 순으로 옵니다.
+                    author = "-"
+                    views = "-"
+                    
+                    if title_idx != -1 and title_idx + 1 < len(lines):
+                        author = lines[title_idx + 1]
+                        # 만약 다음 줄에 '만뷰'나 '억뷰'가 포함되어 있다면 조회수로 판단
+                        if title_idx + 2 < len(lines):
+                            next_val = lines[title_idx + 2]
+                            if "뷰" in next_val or "만" in next_val:
+                                views = next_val
 
-                    data_to_push.append([f"{rank_counter}위", change, title, author, "2026-02-24"])
+                    data_to_push.append([f"{rank_counter}위", change, title, author, views, "2026-02-24"])
                     seen_titles.add(title)
                     rank_counter += 1
                     
-                    if rank_counter > 20: break # 20위까지만
+                    if rank_counter > 20: break
                 except:
                     continue
 
@@ -90,11 +92,9 @@ def run_kakao_realtime_rank():
             if len(data_to_push) > 1:
                 sh.clear()
                 sh.update('A1', data_to_push)
-                print(f"✅ 드디어 성공! {len(data_to_push)-1}개의 작품을 시트에 모셨습니다.")
+                print(f"✅ 작가/조회수 포함 {len(data_to_push)-1}개 업데이트 완료!")
             else:
-                # 실패 시 페이지 텍스트 일부를 출력해서 원인 파악
-                print("❌ 여전히 고기가 안 잡히네요. 페이지 텍스트 샘플을 확인합니다.")
-                print(page.evaluate("() => document.body.innerText.substring(0, 500)"))
+                print("❌ 데이터를 찾지 못했습니다.")
 
         except Exception as e:
             print(f"❌ 실행 에러: {e}")
