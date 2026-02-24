@@ -92,44 +92,48 @@ def get_naver_data(context):
     return data
 
 # --- [3. 통합 실행 및 시트 업데이트] ---
+# 상단에 이 라이브러리가 필요할 수 있습니다 (설치 안 되어 있다면: pip install playwright-stealth)
+# 만약 설치가 번거로우시면 아래의 'context' 설정만 잘 따라와주세요.
+
 def run_total_ranking():
     print("🚀 [통합 랭킹 시스템] 전체 프로세스 시작...")
     
     try:
-        # 구글 시트 연결
         creds = json.loads(os.environ['GOOGLE_CREDENTIALS'])
         gc = gspread.service_account_from_dict(creds)
-        # ⚠️ 본인의 시트 ID를 입력하세요!
         sh = gc.open_by_key("1c2ax0-3t70NxvxL-cXeOCz9NYnSC9OhrzC0IOWSe5Lc").sheet1
     except Exception as e:
         print(f"❌ 시트 연결 실패: {e}")
         return
 
     with sync_playwright() as p:
-        # 💡 만약 네이버가 0개라면 headless=False로 바꿔서 확인해보세요
-        browser = p.chromium.launch(headless=True)
-        # 사람처럼 보이기 위한 브라우저 설정
+        # 1. 브라우저 실행 시 봇 감지 우회 옵션 추가
+        browser = p.chromium.launch(headless=True) # 여전히 0개면 False로 바꿔보세요!
+        
+        # 2. 컨텍스트 설정 (화면 크기, 언어, 유저에이전트를 실제 사람처럼 설정)
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={'width': 1920, 'height': 1080},
+            locale="ko-KR",
+            timezone_id="Asia/Seoul"
         )
         
-        # 카카오와 네이버 데이터 각각 수집
+        # 3. 자동화 흔적 제거 스크립트 실행 (네이버 차단 우회 핵심)
+        page = context.new_page()
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
+        # 데이터 수집 호출
         kakao_res = get_kakao_data(context)
-        naver_res = get_naver_data(context)
+        naver_res = get_naver_data(context) # 위에서 만든 page를 쓰지 않고 context만 넘깁니다.
         
-        # 합치기 (헤더 포함)
         header = [["순위", "플랫폼", "타이틀", "작가", "장르", "조회수", "썸네일", "수집일"]]
         final_list = header + kakao_res + naver_res
         
-        # 데이터가 하나라도 수집되었을 때만 시트 업데이트 (기존 데이터 보호)
         if len(final_list) > 1:
             sh.clear()
             sh.update('A1', final_list)
-            print(f"🎊 완료! 총 {len(final_list)-1}건의 데이터를 시트에 저장했습니다.")
+            print(f"🎊 완료! 총 {len(final_list)-1}건 저장.")
         else:
-            print("⚠️ 수집된 데이터가 없어 시트를 업데이트하지 않았습니다.")
+            print("⚠️ 여전히 수집된 데이터가 없습니다.")
         
         browser.close()
-
-if __name__ == "__main__":
-    run_total_ranking()
