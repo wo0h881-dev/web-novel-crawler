@@ -41,19 +41,25 @@ def run_kakao_realtime_rank():
 
             print(f"🔎 발견된 제목 요소: {len(title_elements)}개")
 
-            for el in title_elements:
+        for el in title_elements:
                 title = el.inner_text().strip()
                 
-                # 노이즈 제거 (메뉴 이름 등)
-                if len(title) < 2 or any(x in title for x in ["웹소설", "웹툰", "탭", "캐시"]):
+                # [강력 필터링 로직]
+                # 1. 텍스트가 너무 짧거나(메뉴명), 특정 키워드가 포함되면 버립니다.
+                noise_keywords = ["다크 모드", "Top 300", "오늘의 PICK", "설정", "고객센터", "로그아웃", "웹툰", "웹소설"]
+                if len(title) < 2 or any(keyword in title for keyword in noise_keywords):
                     continue
                 
+                # 2. 숫자로만 이루어진 행(순위 정보 등)은 제외합니다.
+                if title.isdigit():
+                    continue
+                
+                # 3. 중복 저장 방지
                 if title not in seen_titles:
-                    # 작가 정보는 제목 요소 주변에 있지만, 일단 제목부터 확실히 가져옵니다.
                     data_to_push.append([title, "카카오 작가", "카카오", "2026-02-24", "-"])
                     seen_titles.add(title)
                 
-                if len(data_to_push) > 21: # 상위 20개만
+                if len(data_to_push) > 20: # 딱 20개만 깔끔하게
                     break
 
             # 만약 클래스로 못 찾았다면, 아까의 '괴담' 텍스트를 포함한 요소를 강제로 찾습니다.
