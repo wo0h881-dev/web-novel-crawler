@@ -20,11 +20,13 @@ def run_kakao_weekly_rank():
         print(f"❌ 시트 연결 실패: {e}")
         return
 
-    # 2. 크롤링
+ # 2. 크롤링
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
+        # 실제 사용자처럼 보이기 위한 정밀 설정
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={'width': 1280, 'height': 1024}
         )
         page = context.new_page()
         
@@ -32,9 +34,9 @@ def run_kakao_weekly_rank():
             url = "https://page.kakao.com/menu/10011/screen/93"
             print(f"🔗 접속 중: {url}")
             page.goto(url, wait_until="networkidle")
-            page.wait_for_timeout(7000) # 로딩 시간을 7초로 더 늘렸습니다.
+            page.wait_for_timeout(8000) # 로딩 대기 시간을 8초로 충분히 확보
 
-            # 작품 아이템 추출
+            # 작품 아이템 추출 (더 넓은 범위의 선택자 사용)
             items = page.query_selector_all('div[class*="cursor-pointer"]')
             print(f"🔎 탐색된 총 아이템 수: {len(items)}개")
 
@@ -42,41 +44,38 @@ def run_kakao_weekly_rank():
 
             for item in items:
                 try:
-                    # 텍스트를 일단 다 긁어옵니다.
-                    text_content = item.inner_text().strip()
-                    if not text_content: continue
+                    # 해당 칸 안의 모든 span 태그(글자들)를 가져옵니다.
+                    spans = item.query_selector_all('span')
+                    texts = [s.inner_text().strip() for s in spans if s.inner_text().strip()]
                     
-                    lines = [t.strip() for t in text_content.split('\n') if t.strip()]
-                    
-                    # [필터링 완화 로직]
-                    # 메뉴 탭(판타지탭 등)은 텍스트에 '탭'이 들어가거나 매우 짧습니다.
-                    if any(x in text_content for x in ["탭", "전체", "실시간", "랭킹", "오늘신작"]):
+                    # 메뉴 탭 필터링 (텍스트에 '탭'이 들어있으면 제외)
+                    total_text = "".join(texts)
+                    if any(x in total_text for x in ["탭", "실시간", "오늘신작", "장르"]):
                         continue
-                    
-                    # 진짜 소설은 보통 [순위, 제목, 작가, 조회수/별점] 순서입니다.
-                    # 순위 숫자가 맨 앞에 있거나 제목 뒤에 붙어있을 수 있습니다.
-                    if len(lines) >= 2:
-                        # 첫 번째가 숫자면 1위 제목 2위 작가 순
-                        if lines[0].isdigit():
-                            title = lines[1]
-                            author = lines[2] if len(lines) > 2 else "정보없음"
-                            rank = f"{lines[0]}위"
+
+                    # 카카오 주간 랭킹의 전형적인 구조: [순위, 제목, 작가, 조회수/별점...]
+                    if len(texts) >= 3:
+                        # 첫 번째가 숫자(순위)인 경우
+                        if texts[0].isdigit():
+                            rank = f"{texts[0]}위"
+                            title = texts[1]
+                            author = texts[2]
                         else:
-                            # 숫자가 없더라도 제목과 작가로 추정되는 것들을 가져옵니다.
-                            title = lines[0]
-                            author = lines[1]
+                            # 숫자가 없더라도 첫 두 요소를 제목과 작가로 간주
                             rank = "-"
-                        
-                        # 중복 방지 및 제목 길이 체크 (너무 짧은 메뉴 이름 방어)
+                            title = texts[0]
+                            author = texts[1]
+
+                        # 제목이 너무 짧은 노이즈 제거
                         if len(title) > 1:
                             data_to_push.append([title, author, "카카오(주간)", "2026-02-24", rank])
                 except:
                     continue
 
-            # 3. 데이터 저장
+            # 3. 데이터 저장 및 중복 제거
             if len(data_to_push) > 1:
                 sh.clear()
-                # 중복 데이터 제거 (제목 기준)
+                # 제목 기준 중복 제거
                 seen = set()
                 final_data = []
                 for row in data_to_push:
@@ -87,10 +86,13 @@ def run_kakao_weekly_rank():
                 sh.update('A1', final_data[:21]) 
                 print(f"✅ 총 {len(final_data)-1}개의 주간 랭킹 소설 저장 완료!")
             else:
-                print("❌ 여전히 데이터를 찾지 못했습니다. 구조 확인이 필요합니다.")
+                # 만약 위 방법도 실패하면, 페이지 전체 텍스트 구조를 로그에 찍어 확인합니다.
+                print("❌ 데이터를 찾지 못했습니다. 현재 페이지의 텍스트 일부를 분석합니다:")
+                sample = page.content()[:500]
+                print(f"샘플 HTML: {sample}")
 
         except Exception as e:
-            print(f"❌ 에러: {e}")
+            print(f"❌ 에러 발생: {e}")
         finally:
             browser.close()
 
