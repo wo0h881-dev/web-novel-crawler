@@ -116,7 +116,7 @@ def run_total_ranking():
     try:
         creds = json.loads(os.environ['GOOGLE_CREDENTIALS'])
         gc = gspread.service_account_from_dict(creds)
-        sh = gc.open_by_key("여기에_시트_고유_ID_입력").sheet1
+        sh = gc.open_by_key("1c2ax0-3t70NxvxL-cXeOCz9NYnSC9OhrzC0IOWSe5Lc").sheet1
     except Exception as e:
         print(f"❌ 구글 시트 연결 실패: {e}")
         return
