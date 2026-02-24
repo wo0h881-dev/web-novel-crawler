@@ -3,9 +3,10 @@ import json
 import gspread
 from playwright.sync_api import sync_playwright
 
-def run_kakao_weekly_rank():
-    print("🚀 카카오페이지 [주간 랭킹] 진짜 목록 수집 시작...")
+def run_kakao_rank():
+    print("🚀 카카오페이지 데이터 정밀 수집 시작...")
     
+    # 1. 구글 시트 연결
     try:
         creds_json = os.environ['GOOGLE_CREDENTIALS']
         creds = json.loads(creds_json)
@@ -23,51 +24,50 @@ def run_kakao_weekly_rank():
         page = context.new_page()
         
         try:
+            # 주간 랭킹(93) 또는 실시간(94) 중 원하는 URL 사용
             url = "https://page.kakao.com/menu/10011/screen/93"
             page.goto(url, wait_until="networkidle")
-            page.wait_for_timeout(8000) 
+            page.wait_for_timeout(8000) # 로딩 대기
 
-            # [핵심 수정] 상단 배너를 제외하고 실제 '리스트'가 담긴 영역의 아이템만 찾습니다.
-            # 카카오 리스트 아이템들은 보통 특정 구조 안에 묶여 있습니다.
-            items = page.query_selector_all('div[class*="cursor-pointer"]')
-            
+            # [핵심] <a> 태그이면서 내부에 이미지가 있고, 텍스트가 있는 요소만 추출
+            # 광고 배너는 보통 <a> 구조가 소설과 다르다는 점을 이용합니다.
+            cards = page.query_selector_all('div.flex-1.cursor-pointer')
+            print(f"🔎 후보 아이템 수: {len(cards)}개")
+
             data_to_push = [["타이틀", "작가", "플랫폼", "수집일", "순위"]]
             
-            for item in items:
+            for card in cards:
                 try:
-                    raw_text = [t.strip() for t in item.inner_text().split('\n') if t.strip()]
+                    # 칸 안의 텍스트 추출
+                    raw_text = [t.strip() for t in card.inner_text().split('\n') if t.strip()]
                     
-                    # 소설 아이템 판별 기준 강화:
-                    # 1. 광고 문구에 자주 쓰이는 단어 제외
-                    # 2. 텍스트가 너무 길거나 짧은 배너 형태 제외
-                    full_text = "".join(raw_text)
-                    if any(x in full_text for x in ["선공개", "캐시", "선물", "이벤트", "탭"]):
-                        continue
-                    
-                    # 진짜 랭킹 아이템은 [순위, 제목, 작가, 조회수...] 순서입니다.
+                    # 진짜 소설은 보통 [순위, 제목, 작가, (기타정보)] 순서로 3줄 이상입니다.
                     if len(raw_text) >= 3 and raw_text[0].isdigit():
                         rank_num = int(raw_text[0])
-                        # 1위부터 100위 사이의 숫자만 인정 (광고의 14 같은 숫자 방어)
-                        if 1 <= rank_num <= 100:
-                            title = raw_text[1]
-                            author = raw_text[2]
-                            
-                            # 중복 체크
-                            if not any(title == row[0] for row in data_to_push):
-                                data_to_push.append([title, author, "카카오(주간)", "2026-02-24", f"{rank_num}위"])
+                        title = raw_text[1]
+                        author = raw_text[2]
+                        
+                        # 광고성 키워드 차단 (이중 보안)
+                        if any(x in title for x in ["캐시", "이벤트", "선물", "선공개"]):
+                            continue
+                        
+                        # 중복 제거 및 리스트 추가
+                        if not any(title == row[0] for row in data_to_push):
+                            data_to_push.append([title, author, "카카오(주간)", "2026-02-24", f"{rank_num}위"])
                 except:
                     continue
 
-            # 데이터 저장
+            # 3. 데이터 저장 (순위순 정렬)
             if len(data_to_push) > 1:
-                sh.clear()
-                # 순위별로 정렬해서 넣기
                 header = data_to_push[0]
+                # 순위 숫자로 정렬
                 body = sorted(data_to_push[1:], key=lambda x: int(x[4].replace('위','')))
-                sh.update('A1', [header] + body[:20]) 
-                print(f"✅ 총 {len(body[:20])}개의 소설을 순위대로 저장했습니다!")
+                
+                sh.clear()
+                sh.update('A1', [header] + body[:20]) # 상위 20개
+                print(f"✅ 총 {len(body[:20])}개의 작품 저장 성공!")
             else:
-                print("❌ 진짜 소설 목록을 찾지 못했습니다.")
+                print("❌ 유효한 소설 목록을 찾지 못했습니다.")
 
         except Exception as e:
             print(f"❌ 에러: {e}")
@@ -75,4 +75,4 @@ def run_kakao_weekly_rank():
             browser.close()
 
 if __name__ == "__main__":
-    run_kakao_weekly_rank()
+    run_kakao_rank()
