@@ -1,46 +1,35 @@
 import os
 import json
 import gspread
-from playwright.sync_api import sync_playwright
 
-def crawl_kakao_and_update():
-    # 1. 구글 시트 연결
-    creds_json = os.environ['GOOGLE_CREDENTIALS']
-    creds = json.loads(creds_json)
-    gc = gspread.service_account_from_dict(creds)
-    
-    # "웹소설 데이터" 부분에 실제 구글 시트 이름을 적으세요
-    sh = gc.open("웹소설 데이터").sheet1
+def run_test():
+    print("--- 시스템 점검 시작 ---")
+    try:
+        # 1. Secrets 확인
+        print("1. Secrets 로드 중...")
+        creds_json = os.environ.get('GOOGLE_CREDENTIALS')
+        if not creds_json:
+            print("❌ 에러: GOOGLE_CREDENTIALS 시크릿을 찾을 수 없습니다.")
+            return
+        
+        creds = json.loads(creds_json)
+        gc = gspread.service_account_from_dict(creds)
+        print("✅ 구글 인증 성공!")
 
-    with sync_playwright() as p:
-        # 브라우저 실행
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36").new_page()
-        
-        # 카카오페이지 웹소설 랭킹 페이지 접속
-        url = "https://page.kakao.com/menu/10011/screen/94" 
-        page.goto(url)
-        page.wait_for_timeout(3000) # 로딩 대기
+        # 2. 시트 열기
+        sheet_name = "웹소설 데이터" # <-- 여기를 실제 시트 이름으로 수정!!
+        print(f"2. '{sheet_name}' 시트 여는 중...")
+        sh = gc.open(sheet_name).sheet1
+        print("✅ 시트 찾기 성공!")
 
-        # 데이터 추출 (카카오페이지 구조에 맞춘 선택자)
-        novels = page.query_selector_all(".flex-1.cursor-pointer") # 각 소설 아이템
-        
-        data_to_update = []
-        for i, novel in enumerate(novels[:20]): # 상위 20개
-            try:
-                title = novel.query_selector(".text-el-70").inner_text() # 제목
-                author = novel.query_selector(".text-el-60").inner_text() # 작가/정보
-                # 조회수는 카카오 구조상 상세페이지에 있어, 메인에서는 '카카오' 플랫폼 명시
-                data_to_update.append([title, author, "카카오페이지", "확인필요", 0])
-            except:
-                continue
-        
-        # 2. 시트 업데이트 (2행부터 데이터 덮어쓰기)
-        if data_to_update:
-            sh.update('A2', data_to_update)
-            print(f"{len(data_to_update)}개의 데이터를 업데이트했습니다.")
-        
-        browser.close()
+        # 3. 데이터 쓰기
+        sh.update('A1', [['마지막 확인 시간', '상태'], ['2026-02-24', '연결됨']])
+        print("✅ 데이터 쓰기 성공! 이제 구글 시트를 확인해 보세요.")
+
+    except gspread.exceptions.SpreadsheetNotFound:
+        print(f"❌ 에러: '{sheet_name}'이라는 이름의 시트를 찾을 수 없습니다.")
+    except Exception as e:
+        print(f"❌ 기타 에러 발생: {e}")
 
 if __name__ == "__main__":
-    crawl_kakao_and_update()
+    run_test()
