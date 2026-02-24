@@ -5,7 +5,7 @@ import re
 from playwright.sync_api import sync_playwright
 
 def run_kakao_realtime_rank():
-    print("🚀 카카오페이지 [실시간 랭킹] 100% 정밀 수집 시작...")
+    print("🚀 카카오페이지 [실제 순위 & 장르 정제] 최종 수집 시작...")
     
     try:
         creds_json = os.environ['GOOGLE_CREDENTIALS']
@@ -24,64 +24,68 @@ def run_kakao_realtime_rank():
         page = context.new_page()
         
         try:
-            # 1. 랭킹 페이지 접속 및 링크 수집
             url = "https://page.kakao.com/menu/10011/screen/94"
             page.goto(url, wait_until="networkidle")
-            page.wait_for_timeout(4000)
-            page.mouse.wheel(0, 2000) # 넉넉히 스크롤
-            page.wait_for_timeout(2000)
-
-            links = page.eval_on_selector_all('a[href*="/content/"]', 'elements => elements.map(e => e.href)')
-            unique_links = []
-            for link in links:
-                if link not in unique_links: unique_links.append(link)
+            page.wait_for_timeout(5000)
             
+            # [순위 보정] 화면을 충분히 내려서 모든 숫자가 로딩되게 함
+            page.mouse.wheel(0, 2000)
+            page.wait_for_timeout(3000)
+
+            # 1. 실제 화면에 보이는 '작품 카드'들만 정확히 타겟팅
+            # 카카오 페이지의 리스트 아이템들을 순서대로 가져옵니다.
+            items = page.query_selector_all('div.flex-1.cursor-pointer')
+            
+            ranking_data = []
+            for item in items:
+                link_el = item.query_selector('a[href*="/content/"]')
+                # 순번 숫자 추출 (이미지 옆에 써있는 1, 2, 3...)
+                rank_el = item.query_selector('p.font-bold2') # 카카오 순위 숫자 클래스
+                if link_el and rank_el:
+                    rank_num = rank_el.inner_text().strip()
+                    ranking_data.append({"rank": f"{rank_num}위", "url": link_el.href_as_str() if hasattr(link_el, 'href_as_str') else page.evaluate("el => el.href", link_el)})
+
             data_to_push = [["순위", "타이틀", "작가", "장르", "조회수", "수집일"]]
             
-            # 2. 상위 20개 상세 페이지 정밀 수집
-            for i, link in enumerate(unique_links[:20]):
+            # 2. 수집된 실제 순서(20개)대로 상세 페이지 진입
+            for i, info in enumerate(ranking_data[:20]):
                 try:
                     detail_page = context.new_page()
-                    detail_page.goto(link, wait_until="networkidle")
-                    detail_page.wait_for_timeout(2000)
+                    detail_page.goto(info["url"], wait_until="networkidle")
+                    detail_page.wait_for_timeout(1500)
 
-                    # [타이틀]
                     title = detail_page.locator('meta[property="og:title"]').get_attribute("content")
                     
-                    # [작가] - 알려주신 span 태그와 클래스 조합으로 정밀 타겟팅
-                    # 클래스가 여러개일 경우 핵심인 text-el-70과 작가명이 들어가는 위치를 고려합니다.
+                    # 작가 추출 (알려주신 클래스 기준)
                     author_el = detail_page.locator('span.text-el-70.opacity-70').first
                     author = author_el.inner_text().strip() if author_el.count() > 0 else "-"
                     
-                    # [장르] - '웹소설' 단어 삭제 및 정제
-                    genre_el = detail_page.locator('span.break-all.align-middle').first
-                    genre_raw = genre_el.inner_text().strip() if genre_el.count() > 0 else "-"
-                    genre = genre_raw.replace("웹소설", "").replace("·", "").replace(" ", "").strip()
+                    # [장르 정제 로직] 모든 텍스트 중 '웹소설'이 포함된 줄을 찾아 장르만 추출
+                    all_spans = detail_page.locator('span').all_inner_texts()
+                    genre = "-"
+                    for s in all_spans:
+                        if "웹소설" in s:
+                            # '웹소설', '·', 공백 제거
+                            genre = s.replace("웹소설", "").replace("·", "").replace(" ", "").strip()
+                            break
                     
-                    # [조회수] - 숫자 + 억/만 패턴 정밀 추출
-                    view_el = detail_page.locator('span.text-el-70.opacity-70').last # 보통 작가 아래쪽에 위치
-                    view_raw = view_el.inner_text().strip() if view_el.count() > 0 else "-"
-                    # 만약 위에서 잡은게 조회수가 아니라면 전체 텍스트에서 재검색
-                    if "억" not in view_raw and "만" not in view_raw:
-                        all_text = detail_page.evaluate("() => document.body.innerText")
-                        match = re.search(r'(\d+\.?\d*[만|억])', all_text)
-                        view_raw = match.group(1) if match else "-"
+                    # 조회수 추출
+                    view_match = re.search(r'(\d+\.?\d*[만|억])', detail_page.evaluate("() => document.body.innerText"))
+                    views = view_match.group(1) if view_match else "-"
 
-                    data_to_push.append([f"{i+1}위", title, author, genre, view_raw, "2026-02-24"])
-                    print(f"✅ {i+1}위 수집 완료: {title} | {author} | {genre} | {view_raw}")
-                    
+                    data_to_push.append([info["rank"], title, author, genre, views, "2026-02-24"])
+                    print(f"✅ {info['rank']} 완료: {title} | {genre}")
                     detail_page.close()
-                except Exception as e:
-                    print(f"⚠️ {i+1}위 수집 중 오류: {e}")
+                except:
                     continue
 
-            # 3. 구글 시트 업데이트
+            # 3. 시트 업데이트
             sh.clear()
             sh.update('A1', data_to_push)
-            print("🎊 [작가/장르/조회수] 모든 데이터가 완벽하게 정제되어 저장되었습니다!")
+            print("🎊 [실제 순위 일치 + 장르 정제] 완료!")
 
         except Exception as e:
-            print(f"❌ 전체 실행 에러: {e}")
+            print(f"❌ 에러: {e}")
         finally:
             browser.close()
 
