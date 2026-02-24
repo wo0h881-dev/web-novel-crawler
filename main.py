@@ -4,13 +4,14 @@ import gspread
 from playwright.sync_api import sync_playwright
 
 def run_kakao_realtime_rank():
-    print("🚀 카카오페이지 [실시간 랭킹] 그물망 수집 가동...")
+    print("🚀 카카오페이지 [실시간 랭킹] 최종 정제 수집 시작...")
     
+    # 1. 구글 시트 연결
     try:
         creds_json = os.environ['GOOGLE_CREDENTIALS']
         creds = json.loads(creds_json)
         gc = gspread.service_account_from_dict(creds)
-        # 본인의 시트 ID를 다시 한번 확인해주세요!
+        # 본인의 시트 ID를 다시 확인해 주세요!
         sheet_id = "1c2ax0-3t70NxvxL-cXeOCz9NYnSC9OhrzC0IOWSe5Lc" 
         sh = gc.open_by_key(sheet_id).sheet1
         print("✅ 구글 시트 연결 성공")
@@ -20,73 +21,76 @@ def run_kakao_realtime_rank():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        )
         page = context.new_page()
         
         try:
+            # 실시간 랭킹 페이지 접속
             url = "https://page.kakao.com/menu/10011/screen/94"
             page.goto(url, wait_until="networkidle")
             
-            # [보정 1] 데이터를 충분히 불러오기 위해 더 많이, 더 자주 스크롤합니다.
+            # [보정] 충분히 아래까지 로딩되도록 스크롤
             for _ in range(5):
                 page.mouse.wheel(0, 1000)
-                page.wait_for_timeout(1500)
+                page.wait_for_timeout(1000)
             
-            # [보정 2] 제목 요소(.text-el-60)를 먼저 다 찾습니다.
-            title_elements = page.query_selector_all('.text-el-60')
-            print(f"🔎 발견된 후보 텍스트: {len(title_elements)}개")
-
+            # 제목 요소(.text-el-60)를 기준으로 전체 덩어리 탐색
+            items = page.query_selector_all('div.flex-1.cursor-pointer')
+            
             data_to_push = [["순위", "변동", "타이틀", "작가", "수집일"]]
             seen_titles = set()
-            rank_counter = 1
+            rank_counter = 1 # 진짜 소설에만 순위를 붙이기 위한 카운터
 
-            for el in title_elements:
+            # [노이즈 리스트] 시트 1, 2위에 나왔던 범인들 차단
+            noise_list = ["다크 모드", "Top 300", "오늘의 PICK", "설정", "고객센터", "로그아웃", "이벤트", "캐시"]
+
+            for item in items:
                 try:
-                    title = el.inner_text().strip()
-                    
-                    # 노이즈 필터링 (메뉴명, 공지 등 차단)
-                    forbidden = ["오늘의 PICK", "TOP 300", "캐시", "선물", "종료", "탭", "번째"]
-                    if any(x in title for x in forbidden) or title.isdigit() or len(title) < 2:
+                    # 제목 추출
+                    title_el = item.query_selector('.text-el-60')
+                    if not title_el: continue
+                    title = title_el.inner_text().strip()
+
+                    # 1. 노이즈 필터링 (가짜 제목들 컷)
+                    if len(title) < 2 or any(n in title for n in noise_list) or title.isdigit():
                         continue
                     
                     if title not in seen_titles:
-                        # 제목의 부모 요소에서 작가 정보와 순위 변동을 유추합니다.
-                        # <a> 태그 혹은 감싸는 div 텍스트를 가져옵니다.
-                        parent_text = el.evaluate("el => el.closest('a') ? el.closest('a').innerText : ''")
-                        lines = [t.strip() for t in parent_text.split('\n') if t.strip()]
-                        
-                        # 작가 찾기: 보통 제목 아래에 작가명이 있습니다.
-                        author = "정보 확인중"
-                        for i, line in enumerate(lines):
-                            if line == title and i + 1 < len(lines):
-                                author = lines[i+1]
-                                break
-                        
-                        # 순위 변동 아이콘 찾기 (부모 안에서 img 찾기)
-                        parent_el = el.query_selector("xpath=./ancestor::a")
-                        change = "-"
-                        if parent_el:
-                            img = parent_el.query_selector('img[alt="유지"], img[alt="상승"], img[alt="하락"]')
-                            if img: change = img.get_attribute("alt")
+                        # 2. 순위 변동 아이콘 추출
+                        change_img = item.query_selector('img[alt="유지"], img[alt="상승"], img[alt="하락"]')
+                        change = change_img.get_attribute("alt") if change_img else "-"
 
+                        # 3. 작가 정보 추출 (부모 요소 전체 텍스트에서 제목 다음 줄 찾기)
+                        full_text = item.inner_text().split('\n')
+                        author = "정보 확인중"
+                        for i, line in enumerate(full_text):
+                            if line.strip() == title and i + 1 < len(full_text):
+                                author = full_text[i+1].strip()
+                                break
+
+                        # 4. 데이터 적재 (진짜 소설만 여기서 rank_counter가 올라감)
                         data_to_push.append([f"{rank_counter}위", change, title, author, "2026-02-24"])
                         seen_titles.add(title)
                         rank_counter += 1
-                except:
+                        
+                except Exception as e:
                     continue
                 
-                if len(data_to_push) > 21: break
+                if len(data_to_push) > 21: # 상위 20개만 수집
+                    break
 
-            # 3. 데이터 저장
+            # 3. 시트 저장
             if len(data_to_push) > 1:
                 sh.clear()
                 sh.update('A1', data_to_push)
-                print(f"✅ 드디어 {len(data_to_push)-1}개 수집 성공! 시트를 확인하세요.")
+                print(f"✅ 축하합니다! {len(data_to_push)-1}개의 소설 리스트가 완벽하게 정제되었습니다.")
             else:
-                print("❌ 여전히 데이터를 놓쳤습니다. 페이지 구조를 한 번 더 분석해야 합니다.")
+                print("❌ 수집된 데이터가 없습니다. 필터링 조건을 확인해 보세요.")
 
         except Exception as e:
-            print(f"❌ 실행 중 에러: {e}")
+            print(f"❌ 실행 에러: {e}")
         finally:
             browser.close()
 
