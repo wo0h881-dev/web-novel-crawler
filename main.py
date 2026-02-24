@@ -1,10 +1,11 @@
 import os
 import json
 import gspread
+import re
 from playwright.sync_api import sync_playwright
 
 def run_kakao_realtime_rank():
-    print("🚀 카카오페이지 [상세페이지 침투] 100% 정확도 수집 시작...")
+    print("🚀 카카오페이지 [작가/장르/조회수] 최종 정제 수집 시작...")
     
     try:
         creds_json = os.environ['GOOGLE_CREDENTIALS']
@@ -12,6 +13,7 @@ def run_kakao_realtime_rank():
         gc = gspread.service_account_from_dict(creds)
         sheet_id = "1c2ax0-3t70NxvxL-cXeOCz9NYnSC9OhrzC0IOWSe5Lc" 
         sh = gc.open_by_key(sheet_id).sheet1
+        print("✅ 구글 시트 연결 성공")
     except Exception as e:
         print(f"❌ 시트 연결 실패: {e}")
         return
@@ -28,54 +30,54 @@ def run_kakao_realtime_rank():
             page.mouse.wheel(0, 1500)
             page.wait_for_timeout(3000)
 
-            # 1. 랭킹 페이지에서 작품 링크들(href)을 먼저 싹 수집합니다.
-            # 중복 제거를 위해 리스트를 정제합니다.
+            # 1. 메인 랭킹에서 작품 상세 링크 추출
             links = page.eval_on_selector_all('a[href*="/content/"]', 'elements => elements.map(e => e.href)')
             unique_links = []
             for link in links:
                 if link not in unique_links: unique_links.append(link)
             
-            print(f"🔎 총 {len(unique_links[:20])}개의 작품 상세 페이지로 진입합니다...")
-
-            data_to_push = [["순위", "타이틀", "작가", "조회수", "수집일"]]
+            # 헤더 구성: [순위, 타이틀, 작가, 장르, 조회수, 수집일]
+            data_to_push = [["순위", "타이틀", "작가", "장르", "조회수", "수집일"]]
             
-            # 2. 각 링크로 직접 들어가서 정확한 정보를 가져옵니다.
+            # 2. 상위 20개 작품 상세 페이지 침투
             for i, link in enumerate(unique_links[:20]):
                 try:
                     detail_page = context.new_page()
                     detail_page.goto(link, wait_until="networkidle")
-                    detail_page.wait_for_timeout(2000) # 상세페이지 로딩 대기
+                    detail_page.wait_for_timeout(2000)
 
-                    # 제목 (가장 큰 글씨)
+                    # [데이터 추출]
+                    # 타이틀
                     title = detail_page.locator('meta[property="og:title"]').get_attribute("content")
                     
-                    # [핵심] 상세페이지 내의 작가명과 조회수를 직접 타겟팅
-                    # 카카오 상세페이지는 구조가 명확합니다.
-                    # 작가명은 보통 "전체보기" 버튼 근처나 특정 클래스에 있습니다.
-                    author = detail_page.locator('div[class*="text-el-70"]').first.inner_text() if detail_page.locator('div[class*="text-el-70"]').count() > 0 else "작가미상"
+                    # 작가 (제목 바로 아래 위치한 텍스트 요소 타겟팅)
+                    # 상세페이지 내에서 'text-el-70' 클래스 중 첫 번째가 보통 작가명입니다.
+                    author = detail_page.locator('div[class*="text-el-70"]').first.inner_text().strip()
                     
-                    # 조회수 (눈 아이콘 옆의 숫자)
-                    views = "확인불가"
+                    # 장르 (아이콘 옆 텍스트) - '웹소설' 단어 삭제 정제
+                    genre_raw = detail_page.locator('span[class*="text-el-70"]').first.inner_text().strip()
+                    genre = genre_raw.replace("웹소설", "").replace("·", "").strip()
+                    
+                    # 조회수
                     all_text = detail_page.evaluate("() => document.body.innerText")
-                    import re
                     view_match = re.search(r'(\d+\.?\d*[만|억])', all_text)
-                    if view_match: views = view_match.group(1)
+                    views = view_match.group(1) if view_match else "-"
 
-                    data_to_push.append([f"{i+1}위", title, author, views, "2026-02-24"])
-                    print(f"✅ {i+1}위 완료: {title}")
+                    data_to_push.append([f"{i+1}위", title, author, genre, views, "2026-02-24"])
+                    print(f"✅ {i+1}위 수집 성공: {title} ({author} / {genre})")
                     
                     detail_page.close()
-                except:
-                    print(f"⚠️ {i+1}위 수집 중 오류 발생 (스킵)")
+                except Exception as e:
+                    print(f"⚠️ {i+1}위 수집 중 스킵: {e}")
                     continue
 
-            # 3. 시트 업데이트
+            # 3. 구글 시트 최종 업데이트
             sh.clear()
             sh.update('A1', data_to_push)
-            print("🎊 모든 데이터가 100% 정확하게 시트에 기록되었습니다!")
+            print("🎊 모든 작업이 완료되었습니다! 시트를 확인해보세요.")
 
         except Exception as e:
-            print(f"❌ 에러: {e}")
+            print(f"❌ 에러 발생: {e}")
         finally:
             browser.close()
 
