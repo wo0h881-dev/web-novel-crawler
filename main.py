@@ -53,65 +53,68 @@ def get_naver_data(context):
     print("      네이버 시리즈 수집 시작...")
     data = []
     page = context.new_page()
-    # 실시간 전체 랭킹 리스트 페이지
+    
+    # 네이버 실시간 전체 랭킹
     url = "https://series.naver.com/novel/top100List.series?rankingTypeCode=REALTIME&categoryCode=ALL"
     
     try:
+        # 네이버가 봇으로 인식하지 않도록 세션 유지 및 대기
         page.goto(url, wait_until="networkidle")
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(4000)
+
+        # [수정] 네이버 리스트를 찾는 가장 확실한 방법: 클래스명에 'lst_list'가 포함된 모든 li 찾기
+        items = page.locator('ul[class*="lst_list"] > li').all()
         
-        # 작품 리스트 아이템 추출
-        items = page.locator('ul.lst_list > li').all()
-        print(f"      발견된 네이버 작품 수: {len(items)}개")
-        
+        # 만약 여전히 0개라면, 다른 경로로 한 번 더 시도
+        if len(items) == 0:
+            items = page.locator('.lst_list_wrap li').all()
+            
+        print(f"      🔎 발견된 작품 수: {len(items)}개")
+
         for i, item in enumerate(items[:20]):
             try:
-                # 1. 리스트에서 기본 정보 추출
-                title_el = item.locator('h3 > a')
-                title = title_el.inner_text().strip()
+                # 1. 기본 정보 (제목/작가/썸네일/장르)
+                # 제목 태그가 복잡할 수 있어 내부의 a 태그를 정확히 지칭
+                title_link = item.locator('h3 a, dt a').first
+                title = title_link.inner_text().strip()
+                href = title_link.get_attribute('href')
+                
                 author = item.locator('span.author').inner_text().strip()
                 thumbnail = item.locator('img').get_attribute("src")
                 genre = item.locator('span.genre').inner_text().strip() if item.locator('span.genre').count() > 0 else "-"
                 
-                # 2. 상세 페이지 주소 추출 및 조립
-                href = title_el.get_attribute('href')
+                # 2. 상세 페이지 접속 (조회수 40.4만 수집)
                 detail_url = f"https://series.naver.com{href}"
-                
-                # 3. 상세 페이지로 이동하여 조회수 수집
                 d_page = context.new_page()
-                d_page.goto(detail_url, wait_until="domcontentloaded") # 로딩 속도 최적화
+                d_page.goto(detail_url, wait_until="domcontentloaded")
                 d_page.wait_for_timeout(2000)
                 
-                # 조회수 추출 (사용자님이 주신 <span>40.4만</span> 구조 공략)
+                # [핵심] 사용자님이 알려주신 <span>40.4만</span> 형태 정밀 조준
                 views = "-"
-                # 상세 페이지 전체에서 '만' 혹은 '억'이 들어간 숫자를 찾습니다.
-                content = d_page.content()
-                view_match = re.search(r'<span>(\d+\.?\d*[만|억])</span>', content)
-                
-                if view_match:
-                    views = view_match.group(1)
-                else:
-                    # 만약 위 정규식으로 안 잡힐 경우, 텍스트 전체에서 재검색
-                    all_text = d_page.evaluate("() => document.body.innerText")
-                    alt_match = re.search(r'(\d+\.?\d*[만|억])', all_text)
-                    if alt_match:
-                        views = alt_match.group(1)
+                # 상세 페이지 내 모든 span 중에서 '만' 혹은 '억'이 들어간 텍스트 추출
+                view_spans = d_page.locator('span:has-text("만"), span:has-text("억")').all()
+                for span in view_spans:
+                    text = span.inner_text()
+                    if re.search(r'\d+\.?\d*[만|억]', text):
+                        views = text.strip()
+                        break
                 
                 data.append([f"{i+1}위", "네이버 시리즈", title, author, genre, views, thumbnail, "2026-02-25"])
-                print(f"      ✅ 네이버 {i+1}위 성공: {title} ({views})")
+                print(f"      ✅ {i+1}위 완료: {title} ({views})")
                 d_page.close()
             except Exception as e:
-                print(f"      ⚠️ {i+1}위 상세 수집 중 건너뜀: {e}")
+                print(f"      ⚠️ 개별 항목 오류: {e}")
                 continue
+                
     except Exception as e:
-        print(f"❌ 네이버 접속 에러: {e}")
+        print(f"      ❌ 네이버 접속 에러: {e}")
     
     page.close()
     return data
 
-# --- [통합 실행 함수: 카카오 함수가 있다면 여기 합치기] ---
 def run_total_ranking():
-    print("🚀 통합 랭킹 수집 프로세스 시작...")
+    # 시트 연결 및 실행 로직 (기존과 동일하되 시트 업데이트 부분 확인)
+    # ... (생략된 기존 run_total_ranking 코드)
     
     try:
         creds = json.loads(os.environ['GOOGLE_CREDENTIALS'])
