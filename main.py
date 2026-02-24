@@ -47,33 +47,59 @@ def get_naver_data(context):
     print("      네이버 시리즈 수집 중...")
     data = []
     page = context.new_page()
-    # 네이버 시리즈 실시간 TOP 100 (전체)
+    
+    # 네이버 실시간 TOP 100 (전체)
     url = "https://series.naver.com/novel/top100List.series?rankingTypeCode=REALTIME&categoryCode=ALL"
-    page.goto(url, wait_until="networkidle")
     
-    # 네이버는 리스트 페이지에 정보가 꽤 많아 바로 추출 가능합니다.
-    items = page.locator('ul.lst_list > li').all()
+    try:
+        # 1. 페이지 접속 및 로딩 대기
+        page.goto(url, wait_until="networkidle")
+        page.wait_for_timeout(3000) # 리스트가 완전히 뿌려질 때까지 대기
+        
+        # 2. 리스트 아이템 선택 (li 태그)
+        items = page.locator('div.lst_list_wrap > ul > li').all()
+        print(f"      네이버 아이템 발견: {len(items)}개")
+
+        for i, item in enumerate(items[:20]):
+            try:
+                # 3. 상세 정보 추출
+                # 제목
+                title_el = item.locator('h3 > a')
+                title = title_el.inner_text().strip()
+                
+                # 작가와 장르 (보통 "작가명 | 장르" 혹은 별도 span)
+                author = item.locator('span.author').inner_text().strip().replace("저", "").strip()
+                genre = item.locator('span.genre').inner_text().strip()
+                
+                # 별점 (조회수 대용)
+                score = item.locator('em.score_num').inner_text().strip()
+                views = f"별점 {score}"
+                
+                # 썸네일 (네이버는 lazy loading이 있어 data-src나 src 확인)
+                img_el = item.locator('img')
+                thumbnail = img_el.get_attribute("src")
+                if "blank.gif" in thumbnail: # 실제 이미지가 로딩 전이라면
+                    thumbnail = img_el.get_attribute("data-src")
+
+                data.append([
+                    f"{i+1}위", 
+                    "네이버 시리즈", 
+                    title, 
+                    author, 
+                    genre, 
+                    views, 
+                    thumbnail, 
+                    "2026-02-25"
+                ])
+                print(f"      ✅ 네이버 {i+1}위 완료: {title}")
+            except Exception as e:
+                print(f"      ⚠️ 네이버 {i+1}위 수집 중 개별 오류: {e}")
+                continue
+    except Exception as e:
+        print(f"      ❌ 네이버 페이지 접속 오류: {e}")
     
-    for i, item in enumerate(items[:20]):
-        try:
-            # 제목
-            title = item.locator('h3 > a').inner_text().strip()
-            # 작가 (보통 "작가명" 또는 "작가명 저"로 표시됨)
-            author_raw = item.locator('span.author').inner_text().strip()
-            author = author_raw.replace("저", "").strip()
-            # 장르 (네이버는 리스트에 장르가 표시됨)
-            genre = item.locator('span.genre').inner_text().strip()
-            # 조회수 대체 (별점 혹은 지수)
-            score = item.locator('em.score_num').inner_text().strip()
-            views = f"별점 {score}"
-            # 썸네일
-            thumbnail = item.locator('img').get_attribute("src")
-            
-            data.append([f"{i+1}위", "네이버 시리즈", title, author, genre, views, thumbnail, "2026-02-25"])
-        except: continue
     page.close()
     return data
-
 def run_total_ranking():
     print("🚀 [카카오 x 네이버] 통합 랭킹 수집 시작...")
     
