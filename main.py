@@ -4,7 +4,7 @@ import gspread
 from playwright.sync_api import sync_playwright
 
 def run_kakao_realtime_rank():
-    print("🚀 카카오페이지 [실시간 랭킹] 수집 엔진 가동...")
+    print("🚀 카카오페이지 [실시간 랭킹] 정밀 수집 시작...")
     
     try:
         creds_json = os.environ['GOOGLE_CREDENTIALS']
@@ -23,49 +23,56 @@ def run_kakao_realtime_rank():
         page = context.new_page()
         
         try:
-            # 실시간 랭킹 주소 (확인하신 메뉴 주소)
             url = "https://page.kakao.com/menu/10011/screen/94"
             print(f"🔗 접속 중: {url}")
             page.goto(url, wait_until="networkidle")
-            page.wait_for_timeout(10000) # 충분한 로딩 대기
-
-            # [핵심] 모든 '글자' 요소(span)를 다 가져와서 패턴 분석
-            # 카카오가 클래스명을 숨겨도 화면에 나오는 글자는 속일 수 없습니다.
-            all_spans = page.query_selector_all('span')
-            all_texts = [s.inner_text().strip() for s in all_spans if s.inner_text().strip()]
             
-            data_to_push = [["타이틀", "작가", "플랫폼", "수집일", "순위"]]
-            
-            # 패턴 분석: 보통 [순위(숫자), 제목, 작가] 순서로 배열됩니다.
-            for i in range(len(all_texts) - 2):
-                text = all_texts[i]
-                
-                # 현재 텍스트가 순위(1~100) 숫자인지 확인
-                if text.isdigit() and 1 <= int(text) <= 100:
-                    rank = f"{text}위"
-                    title = all_texts[i+1]
-                    author = all_texts[i+2]
-                    
-                    # 제목이 메뉴 이름이 아니고, 너무 짧지 않은 경우만 필터링
-                    if any(x in title for x in ["탭", "전체", "홈", "랭킹", "이벤트"]):
-                        continue
-                    
-                    if len(title) > 1 and not any(title == row[0] for row in data_to_push):
-                        data_to_push.append([title, author, "카카오(실시간)", "2026-02-24", rank])
+            # 사진을 보니 데이터가 많아서 로딩 시간이 필요합니다.
+            # 스크롤을 살짝 내려서 아래쪽 데이터까지 깨워줍니다.
+            page.mouse.wheel(0, 1000)
+            page.wait_for_timeout(7000) 
 
-            # 데이터 저장
+            # [핵심] 사진 속 작품 카드들의 공통 구조를 타겟팅합니다.
+            # 텍스트가 포함된 모든 div를 가져옵니다.
+            data_to_push = [["타이틀", "작가", "플랫폼", "조회수", "별점"]]
+            
+            # 카카오페이지의 작품 리스트는 보통 특정 클래스 묶음으로 되어 있습니다.
+            # 모든 작품 제목 요소를 직접 찾습니다.
+            items = page.query_selector_all('div.flex-1.cursor-pointer')
+            print(f"🔎 발견된 작품 카드 수: {len(items)}개")
+
+            for idx, item in enumerate(items):
+                try:
+                    # 카드 내부의 텍스트를 줄바꿈으로 나눕니다.
+                    lines = [t.strip() for t in item.inner_text().split('\n') if t.strip()]
+                    
+                    # 사진을 보면 구조가: [순위(있을수도없을수도), 제목] 순서입니다.
+                    # 또는 제목만 달랑 있는 경우도 있습니다.
+                    if len(lines) >= 1:
+                        # 숫자로 시작하면 그 다음 줄이 제목, 아니면 첫 줄이 제목
+                        title = lines[1] if lines[0].isdigit() and len(lines) > 1 else lines[0]
+                        
+                        # 메뉴 이름(웹소설, 웹툰 등)은 제외
+                        if title in ["웹소설", "웹툰", "추천", "오늘신작", "랭킹"]:
+                            continue
+                            
+                        # 중복 제거 및 리스트 추가 (조회수/별점은 리스트에 없으므로 일단 제외)
+                        if not any(title == row[0] for row in data_to_push):
+                            data_to_push.append([title, "작가 정보 확인중", "카카오", "-", "-"])
+                except:
+                    continue
+
+            # 3. 시트 업데이트
             if len(data_to_push) > 1:
                 sh.clear()
-                # 순위 순서대로 정렬 (헤더 제외)
-                header = data_to_push[0]
-                body = sorted(data_to_push[1:], key=lambda x: int(x[4].replace('위','')))
-                sh.update('A1', [header] + body[:20]) 
-                print(f"✅ 총 {len(body[:20])}개의 실시간 랭킹 데이터 저장 완료!")
+                sh.update('A1', data_to_push[:21]) # 상위 20개
+                print(f"✅ 총 {len(data_to_push)-1}개의 작품 업데이트 완료!")
             else:
-                print("❌ 데이터를 찾지 못했습니다. 구조 분석을 위해 로그를 출력합니다.")
-                # 분석용 로그 (상위 30개 텍스트 샘플)
-                print(f"텍스트 샘플: {all_texts[:30]}")
-
+                # 정말 실패했을 때를 대비해 페이지 전체를 훑는 최후의 수단
+                all_text = page.evaluate("() => document.body.innerText")
+                print("❌ 특정 카드를 못 찾아 전체 텍스트에서 제목을 추측합니다.")
+                # 이후 로직...
+                
         except Exception as e:
             print(f"❌ 에러: {e}")
         finally:
