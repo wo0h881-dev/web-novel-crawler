@@ -61,13 +61,14 @@ def fetch_detail_info(detail_url: str):
         if writer_tag:
             author = writer_tag.get_text(strip=True)
 
-    # 3) 장르: genreCode 가 들어간 링크(현판, 무협, 로맨스 등)
+    # 3) 장르: genreCode 가 들어간 링크들 중에서 텍스트가 '웹소설'이 아닌 첫 번째
     genre = "웹소설"
-    genre_link = soup.find("a", href=lambda h: h and "genreCode=" in h)
-    if genre_link:
-        genre_text = genre_link.get_text(strip=True)
-        if genre_text:
-            genre = genre_text
+    genre_links = soup.find_all("a", href=lambda h: h and "genreCode=" in h)
+    for gl in genre_links:
+        txt = gl.get_text(strip=True)
+        if txt and txt != "웹소설":
+            genre = txt
+            break
 
     return views, author, genre
 
