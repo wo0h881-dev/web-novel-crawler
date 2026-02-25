@@ -19,7 +19,8 @@ HEADERS = {
                   "Chrome/122.0 Safari/537.36",
 }
 
-WEBAPP_URL = os.environ.get("WEBAPP_URL")  # GitHub Secrets 에서 주입
+# GitHub Actions 에서 넣어주는 구글 웹앱 URL
+WEBAPP_URL = os.environ.get("WEBAPP_URL")
 
 
 def get_product_no_from_href(href: str) -> str:
@@ -27,29 +28,64 @@ def get_product_no_from_href(href: str) -> str:
     return qs.get("productNo", [""])[0]
 
 
-def fetch_views(detail_url: str) -> str:
+def fetch_detail_info(detail_url: str):
+    """
+    상세 페이지에서 누적 조회수, 작가명, 장르를 한 번에 가져온다.
+    반환: (views, author, genre)
+    """
     r = requests.get(detail_url, headers=HEADERS)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
+    # 1) 조회수: '만' 또는 '억' 이 들어가는 첫 숫자 텍스트
+    views = "-"
     for span in soup.select("span"):
         text = span.get_text(strip=True)
         if any(u in text for u in ["만", "억"]) and any(ch.isdigit() for ch in text):
-            return text
-    return "-"
+            views = text
+            break
+
+    # 2) 작가: 상세 상단 정보에서 '글' 옆에 나오는 a 태그 우선
+    author = "-"
+    author_label = soup.find(
+        lambda tag: tag.name == "span" and tag.get_text(strip=True) == "글"
+    )
+    if author_label:
+        a = author_label.find_next("a")
+        if a:
+            author = a.get_text(strip=True)
+
+    # 못 찾으면 .writer 백업
+    if author == "-":
+        writer_tag = soup.select_one(".writer")
+        if writer_tag:
+            author = writer_tag.get_text(strip=True)
+
+    # 3) 장르: genreCode 가 들어간 링크(현판, 무협, 로맨스 등)
+    genre = "웹소설"
+    genre_link = soup.find("a", href=lambda h: h and "genreCode=" in h)
+    if genre_link:
+        genre_text = genre_link.get_text(strip=True)
+        if genre_text:
+            genre = genre_text
+
+    return views, author, genre
 
 
 def fetch_naver_top20_raw():
+    """
+    네이버 시리즈 웹소설 일간 TOP 20을 랭킹 페이지 + 상세 페이지에서 수집.
+    """
     r = requests.get(RANKING_URL, headers=HEADERS)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
-    # 네이버 TOP100 리스트 li 선택자
+    # TOP100 리스트 li 선택자
     lis = soup.select("#content > div > ul > li")
 
     items = []
     for rank, li in enumerate(lis[:20], start=1):
-        # 제목, 상세 링크
+        # 제목 / 상세 URL
         a = li.select_one("div.comic_cont h3 a") or li.select_one("h3 a")
         if not a:
             continue
@@ -60,31 +96,33 @@ def fetch_naver_top20_raw():
             href = BASE + href
         product_no = get_product_no_from_href(href)
 
-        # 작가
-        author_tag = li.select_one("span.writer")
-        author = author_tag.get_text(strip=True) if author_tag else "-"
-
-        # 썸네일 규칙
+        # 썸네일 (규칙 기반)
         thumbnail_url = f"{BASE}/novel/img/{product_no}/{product_no}.jpg"
 
-        # 누적 조회수
-        views = fetch_views(href)
+        # 상세 페이지에서 조회수 / 작가 / 장르
+        views, author, genre = fetch_detail_info(href)
 
         items.append(
             {
                 "rank": rank,
                 "title": title,
                 "author": author,
+                "genre": genre,
                 "productNo": product_no,
                 "detail_url": href,
                 "thumbnail_url": thumbnail_url,
                 "views": views,
             }
         )
+
     return items
 
 
 def build_payload_for_google(raw_items):
+    """
+    구글 웹앱이 기대하는 형식으로 변환.
+    (source: 'naver', data: JSON 배열)
+    """
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     result = []
 
@@ -95,7 +133,7 @@ def build_payload_for_google(raw_items):
                 "title": item["title"],
                 "author": item.get("author") or "-",
                 "date": today,
-                "genre": "웹소설",
+                "genre": item.get("genre", "웹소설"),
                 "views": item.get("views", "-"),
                 "thumbnail": item.get("thumbnail_url", "-"),
             }
@@ -109,7 +147,7 @@ def send_to_google_webapp(data):
         return
 
     payload = {
-        "source": "naver",          # Apps Script 에서 이 값으로 네이버 시트 선택
+        "source": "naver",          # Apps Script 에서 네이버 시트로 보낼 기준
         "data": json.dumps(data),
     }
 
