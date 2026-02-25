@@ -1,3 +1,5 @@
+from naver import run_naver
+
 import os
 import json
 import re
@@ -108,4 +110,8 @@ def send_to_unified_sheet(data):
         print(f"❌ 전송 중 예외 발생: {e}")
 
 if __name__ == "__main__":
+    # 1. 카카오 먼저 실행
     run_kakao_realtime_rank()
+    # 2. 네이버도 실행
+    run_naver()
+
