@@ -1,28 +1,21 @@
 import os
 import json
-import gspread
 import re
+import requests
+import datetime
 from playwright.sync_api import sync_playwright
 
 def run_kakao_realtime_rank():
-    print("🚀 카카오페이지 [플랫폼 & 썸네일] 최종 보정 수집 시작...")
+    print("🚀 카카오페이지 [플랫폼 & 썸네일] 통합 전송 버전 수집 시작...")
     
-    try:
-        creds_json = os.environ['GOOGLE_CREDENTIALS']
-        creds = json.loads(creds_json)
-        gc = gspread.service_account_from_dict(creds)
-        sheet_id = "1c2ax0-3t70NxvxL-cXeOCz9NYnSC9OhrzC0IOWSe5Lc" 
-        sh = gc.open_by_key(sheet_id).sheet1
-    except Exception as e:
-        print(f"❌ 시트 연결 실패: {e}")
-        return
-
     with sync_playwright() as p:
+        # 브라우저 실행
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
         page = context.new_page()
         
         try:
+            # 카카오 실시간 랭킹 페이지
             url = "https://page.kakao.com/menu/10011/screen/94"
             page.goto(url, wait_until="networkidle")
             page.wait_for_timeout(5000)
@@ -33,9 +26,10 @@ def run_kakao_realtime_rank():
             for link in links:
                 if link not in unique_links: unique_links.append(link)
 
-            # 헤더 구성 (순서 중요!)
-            data_to_push = [["순위", "플랫폼", "타이틀", "작가", "장르", "조회수", "썸네일", "수집일"]]
+            final_results = []
+            today = datetime.datetime.now().strftime("%Y-%m-%d")
             
+            # 상위 20개 상세 수집
             for i, link in enumerate(unique_links[:20]):
                 try:
                     d_page = context.new_page()
@@ -52,7 +46,7 @@ def run_kakao_realtime_rank():
                     if author_el.count() > 0:
                         author = author_el.inner_text().strip()
                     
-                    # 3. 장르 (성공했던 필터링 로직)
+                    # 3. 장르
                     genre = "-"
                     genre_elements = d_page.locator('span.break-all.align-middle').all_inner_texts()
                     if len(genre_elements) > 1:
@@ -65,32 +59,47 @@ def run_kakao_realtime_rank():
                     view_match = re.search(r'(\d+\.?\d*[만|억])', body_text)
                     views = view_match.group(1) if view_match else "-"
 
-                    # [중요] 리스트 순서에 맞춰서 값 넣기
-                    # 순위, 플랫폼, 타이틀, 작가, 장르, 조회수, 썸네일, 수집일
-                    data_to_push.append([
-                        f"{i+1}위", 
-                        "카카오페이지", 
-                        title, 
-                        author, 
-                        genre, 
-                        views, 
-                        thumbnail, 
-                        "2026-02-25"
-                    ])
+                    # 통합 규격에 맞춰 데이터 저장
+                    final_results.append({
+                        "rank": f"{i+1}위",
+                        "title": title,
+                        "author": author,
+                        "date": today,
+                        "genre": genre,
+                        "views": views,
+                        "thumbnail": thumbnail
+                    })
                     print(f"✅ {i+1}위 완료: {title}")
                     d_page.close()
                 except:
                     continue
 
-            # 시트 업데이트
-            sh.clear()
-            sh.update('A1', data_to_push)
-            print("🎊 플랫폼과 썸네일까지 완벽하게 저장되었습니다!")
+            # 🚀 중앙 관제 구글 웹앱으로 데이터 전송
+            send_to_unified_sheet(final_results)
 
         except Exception as e:
             print(f"❌ 에러: {e}")
         finally:
             browser.close()
+
+def send_to_unified_sheet(data):
+    # GitHub Secrets에 저장된 구글 웹앱 URL (끝이 /exec인 것)
+    WEBAPP_URL = os.environ.get("WEBAPP_URL")
+    
+    if not WEBAPP_URL:
+        print("❌ 에러: WEBAPP_URL 환경변수가 없습니다.")
+        return
+
+    payload = {
+        "source": "kakao",
+        "data": json.dumps(data)
+    }
+
+    try:
+        response = requests.get(WEBAPP_URL, params=payload)
+        print(f"📡 전송 결과: {response.text}")
+    except Exception as e:
+        print(f"❌ 전송 오류: {e}")
 
 if __name__ == "__main__":
     run_kakao_realtime_rank()
