@@ -30,16 +30,14 @@ def get_product_no_from_href(href: str) -> str:
 
 def fetch_detail_info(detail_url: str):
     """
-    상세 페이지에서 누적 조회수, 작가명, 장르를 한 번에 가져온다.
-    반환: (views, author, genre)
+    상세 페이지에서 누적 조회수, 작가명, 장르, 썸네일을 한 번에 가져온다.
+    반환: (views, author, genre, thumbnail_url)
     """
     r = requests.get(detail_url, headers=HEADERS)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
-    # -------------------
-    # 1) 조회수: '만' 또는 '억' 이 들어가는 첫 숫자 텍스트
-    # -------------------
+    # 1) 조회수
     views = "-"
     for span in soup.select("span"):
         text = span.get_text(strip=True)
@@ -47,9 +45,7 @@ def fetch_detail_info(detail_url: str):
             views = text
             break
 
-    # -------------------
-    # 2) 작가: 상세 상단 정보에서 '글' 옆에 나오는 a 태그 우선
-    # -------------------
+    # 2) 작가
     author = "-"
     author_label = soup.find(
         lambda tag: tag.name == "span" and tag.get_text(strip=True) == "글"
@@ -58,31 +54,30 @@ def fetch_detail_info(detail_url: str):
         a = author_label.find_next("a")
         if a:
             author = a.get_text(strip=True)
-
-    # 못 찾으면 .writer 백업
     if author == "-":
         writer_tag = soup.select_one(".writer")
         if writer_tag:
             author = writer_tag.get_text(strip=True)
 
-    # -------------------
-    # 3) 장르:
-    #    - info_lst 블록 안에서만 genreCode 링크를 찾음
-    #    - 거기서 첫 번째 텍스트를 장르로 사용
-    # -------------------
-    genre = "웹소설"  # 기본값
-
+    # 3) 장르 (info_lst 안에서)
+    genre = "웹소설"
     info_lst = soup.find("li", class_="info_lst")
     if info_lst:
-        # info_lst 내부의 genreCode 링크들만 대상
         genre_links = info_lst.select('a[href*="genreCode="]')
         if genre_links:
-            # 첫 번째 장르 링크 텍스트 (예: '현판', '무협', '로판' 등)
             first_genre = genre_links[0].get_text(strip=True)
             if first_genre:
                 genre = first_genre
 
-    return views, author, genre
+    # 4) 썸네일: 상세 상단 대표 이미지 src (지금 보여준 구조 기준)
+    thumbnail_url = "-"
+    # 상세 상단에 있는 커버 이미지 하나만 잡기
+    img_tag = soup.select_one("div.pic img, div.thumb img, img#product_img, img[src*='comicthumb-phinf']")
+    if img_tag and img_tag.has_attr("src"):
+        thumbnail_url = img_tag["src"].strip()
+
+    return views, author, genre, thumbnail_url
+
 
 
 def fetch_naver_top20_raw():
