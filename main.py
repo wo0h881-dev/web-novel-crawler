@@ -5,72 +5,79 @@ import os
 import datetime
 
 def fetch_kakao_ranking():
-    # 카카오페이지 실시간 랭킹 주소 (웹소설)
+    # 카카오페이지 실시간 웹소설 랭킹
     url = "https://page.kakao.com/menu/11/screen/37"
+    
+    # 브라우저인 척 속이는 헤더 (매우 중요)
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
     }
 
     try:
-        response = requests.get(url, headers=headers)
-        # 한글 깨짐 방지
+        response = requests.get(url, headers=headers, timeout=30)
         response.encoding = 'utf-8'
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # 카카오페이지의 일반적인 리스트 아이템 구조 (구조 변경 시 확인 필요)
-        items = soup.select('div[class*="flex-col"]') 
+        # 카카오페이지 아이템을 찾는 최신 셀렉터 (구조적 접근)
+        items = soup.find_all('div', class_=lambda x: x and 'flex-col' in x)
         
         results = []
         today = datetime.datetime.now().strftime("%Y-%m-%d")
 
         count = 0
         for item in items:
-            # 제목과 작가가 포함된 태그 찾기
-            title_elem = item.select_one('p[class*="font-bold"]') 
-            author_elem = item.select_one('p[class*="text-el-60"]') 
-            
-            if title_elem and count < 20:
-                count += 1
-                results.append({
-                    "rank": f"{count}위",
-                    "title": title_elem.text.strip(),
-                    "author": author_elem.text.strip() if author_elem else "작가미상",
-                    "date": today
-                })
+            # p 태그 중 굵은 글씨(제목)와 일반 글씨(작가)를 찾음
+            p_tags = item.find_all('p')
+            if len(p_tags) >= 2:
+                title = p_tags[0].text.strip()
+                author = p_tags[1].text.strip()
+                
+                # 순위나 '무료' 같은 키워드 제외 필터링
+                if title and len(title) > 1 and "위" not in title and count < 20:
+                    count += 1
+                    results.append({
+                        "rank": f"{count}위",
+                        "title": title,
+                        "author": author,
+                        "date": today
+                    })
         
         return results
     except Exception as e:
-        print(f"❌ 데이터 수집 중 오류 발생: {e}")
+        print(f"❌ 수집 중 에러: {e}")
         return []
 
 def send_to_google_sheet(data):
-    # 깃허브 Secrets에 저장한 WEBAPP_URL 값을 불러옵니다.
-    # 코드에 직접 주소를 적지 않아도 보안상 안전하게 전송됩니다.
+    # GitHub Secrets에 넣은 구글 앱스 스크립트 배포 URL
     WEBAPP_URL = os.environ.get("WEBAPP_URL") 
     
     if not WEBAPP_URL:
-        print("❌ 에러: WEBAPP_URL 환경변수가 설정되지 않았습니다.")
+        print("❌ WEBAPP_URL이 설정되지 않았습니다.")
         return
 
-    # 전송 데이터 구성 (중앙 관제 시트에서 카카오임을 식별하도록 source 설정)
     payload = {
-        "source": "kakao",
+        "source": "kakao",  # 구글 시트가 카카오 탭에 넣으라고 알려줌
         "data": json.dumps(data)
     }
 
     try:
-        # GET 방식으로 구글 웹앱(GAS)에 데이터 전송
+        # 주소 뒤에 파라미터를 붙여서 전송
         response = requests.get(WEBAPP_URL, params=payload)
-        print(f"📡 전송 시도... 결과: {response.text}")
+        print(f"📡 전송 결과: {response.text}")
     except Exception as e:
-        print(f"❌ 데이터 전송 중 오류 발생: {e}")
+        print(f"❌ 전송 중 에러: {e}")
 
 if __name__ == "__main__":
-    print("🚀 [카카오페이지] 랭킹 수집 및 전송 시작...")
+    print("🚀 카카오 자동 수집 시작...")
     ranking_data = fetch_kakao_ranking()
     
     if ranking_data:
-        print(f"✅ {len(ranking_data)}개의 데이터를 성공적으로 긁어왔습니다.")
+        print(f"✅ {len(ranking_data)}개 수집 성공!")
         send_to_google_sheet(ranking_data)
     else:
-        print("⚠️ 수집된 데이터가 없습니다. 셀렉터(Selector)를 확인해주세요.")
+        # 이 메시지가 뜨면 카카오가 접속을 완전히 막은 것임
+        print("⚠️ 데이터를 찾지 못했습니다. 셀렉터 확인이 필요합니다.")
