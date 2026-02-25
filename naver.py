@@ -61,16 +61,20 @@ def fetch_detail_info(detail_url: str):
         if writer_tag:
             author = writer_tag.get_text(strip=True)
 
-    # 3) 장르: genreCode 가 들어간 링크들 중에서 텍스트가 '웹소설'이 아닌 첫 번째
+    # 3) 장르: 예시처럼 genreCode=... 이 들어간 링크의 텍스트 사용
+    #   <a href="/novel/categoryProductList.series?categoryTypeCode=genre&genreCode=206">무협</a>
     genre = "웹소설"
-    genre_links = soup.find_all("a", href=lambda h: h and "genreCode=" in h)
-    for gl in genre_links:
-        txt = gl.get_text(strip=True)
-        if txt and txt != "웹소설":
+    genre_link = soup.find(
+        "a",
+        href=lambda h: h and "categoryProductList.series" in h and "genreCode=" in h,
+    )
+    if genre_link:
+        txt = genre_link.get_text(strip=True)
+        if txt:
             genre = txt
-            break
 
     return views, author, genre
+
 
 
 def fetch_naver_top20_raw():
