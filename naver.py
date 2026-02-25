@@ -61,12 +61,15 @@ def fetch_detail_info(detail_url: str):
         if writer_tag:
             author = writer_tag.get_text(strip=True)
 
-    # 3) 장르: 예시처럼 genreCode=... 이 들어간 링크의 텍스트 사용
-    #   <a href="/novel/categoryProductList.series?categoryTypeCode=genre&genreCode=206">무협</a>
+    # 3) 장르:
+    #    예) <a href="/novel/categoryProductList.series?categoryTypeCode=genre&genreCode=206">무협</a>
     genre = "웹소설"
     genre_link = soup.find(
         "a",
-        href=lambda h: h and "categoryProductList.series" in h and "genreCode=" in h,
+        href=lambda h: h
+        and "novel/categoryProductList.series" in h
+        and "categoryTypeCode=genre" in h
+        and "genreCode=" in h,
     )
     if genre_link:
         txt = genre_link.get_text(strip=True)
