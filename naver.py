@@ -61,20 +61,27 @@ def fetch_detail_info(detail_url: str):
         if writer_tag:
             author = writer_tag.get_text(strip=True)
 
-    # 3) 장르:
-    #    예) <a href="/novel/categoryProductList.series?categoryTypeCode=genre&genreCode=206">무협</a>
+       # 3) 장르:
+    #   - 추천장르(ul.noble_recommend) 안의 링크는 제외
     genre = "웹소설"
-    genre_link = soup.find(
-        "a",
-        href=lambda h: h
-        and "novel/categoryProductList.series" in h
-        and "categoryTypeCode=genre" in h
-        and "genreCode=" in h,
-    )
-    if genre_link:
-        txt = genre_link.get_text(strip=True)
+
+    # 추천장르 영역
+    recommend = soup.select_one("ul.noble_recommend")
+    recommend_links = set()
+    if recommend:
+        for a in recommend.find_all("a", href=True):
+            recommend_links.add(a["href"])
+
+    # 전체 페이지에서 genreCode 링크를 돌면서,
+    # 추천장르에 있는 href 는 건너뛰고, 텍스트가 비지 않은 첫 번째를 사용
+    for gl in soup.find_all("a", href=lambda h: h and "genreCode=" in h):
+        href = gl.get("href")
+        if href in recommend_links:
+            continue  # 추천장르는 스킵
+        txt = gl.get_text(strip=True)
         if txt:
             genre = txt
+            break
 
     return views, author, genre
 
