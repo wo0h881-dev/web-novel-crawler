@@ -37,7 +37,9 @@ def fetch_detail_info(detail_url: str):
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
+    # -------------------
     # 1) 조회수: '만' 또는 '억' 이 들어가는 첫 숫자 텍스트
+    # -------------------
     views = "-"
     for span in soup.select("span"):
         text = span.get_text(strip=True)
@@ -45,7 +47,9 @@ def fetch_detail_info(detail_url: str):
             views = text
             break
 
+    # -------------------
     # 2) 작가: 상세 상단 정보에서 '글' 옆에 나오는 a 태그 우선
+    # -------------------
     author = "-"
     author_label = soup.find(
         lambda tag: tag.name == "span" and tag.get_text(strip=True) == "글"
@@ -61,30 +65,24 @@ def fetch_detail_info(detail_url: str):
         if writer_tag:
             author = writer_tag.get_text(strip=True)
 
-       # 3) 장르:
-    #   - 추천장르(ul.noble_recommend) 안의 링크는 제외
-    genre = "웹소설"
+    # -------------------
+    # 3) 장르:
+    #    - info_lst 블록 안에서만 genreCode 링크를 찾음
+    #    - 거기서 첫 번째 텍스트를 장르로 사용
+    # -------------------
+    genre = "웹소설"  # 기본값
 
-    # 추천장르 영역
-    recommend = soup.select_one("ul.noble_recommend")
-    recommend_links = set()
-    if recommend:
-        for a in recommend.find_all("a", href=True):
-            recommend_links.add(a["href"])
-
-    # 전체 페이지에서 genreCode 링크를 돌면서,
-    # 추천장르에 있는 href 는 건너뛰고, 텍스트가 비지 않은 첫 번째를 사용
-    for gl in soup.find_all("a", href=lambda h: h and "genreCode=" in h):
-        href = gl.get("href")
-        if href in recommend_links:
-            continue  # 추천장르는 스킵
-        txt = gl.get_text(strip=True)
-        if txt:
-            genre = txt
-            break
+    info_lst = soup.find("li", class_="info_lst")
+    if info_lst:
+        # info_lst 내부의 genreCode 링크들만 대상
+        genre_links = info_lst.select('a[href*="genreCode="]')
+        if genre_links:
+            # 첫 번째 장르 링크 텍스트 (예: '현판', '무협', '로판' 등)
+            first_genre = genre_links[0].get_text(strip=True)
+            if first_genre:
+                genre = first_genre
 
     return views, author, genre
-
 
 
 def fetch_naver_top20_raw():
