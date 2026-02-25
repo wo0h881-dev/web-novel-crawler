@@ -83,23 +83,29 @@ def run_kakao_realtime_rank():
             browser.close()
 
 def send_to_unified_sheet(data):
-    # GitHub Secrets에 저장된 구글 웹앱 URL (끝이 /exec인 것)
     WEBAPP_URL = os.environ.get("WEBAPP_URL")
-    
     if not WEBAPP_URL:
-        print("❌ 에러: WEBAPP_URL 환경변수가 없습니다.")
+        print("❌ WEBAPP_URL이 없습니다.")
         return
 
+    # 전송 데이터 구성
     payload = {
         "source": "kakao",
         "data": json.dumps(data)
     }
 
     try:
-        response = requests.get(WEBAPP_URL, params=payload)
-        print(f"📡 전송 결과: {response.text}")
+        # GET 대신 POST 방식을 사용하여 데이터 길이 제한을 우회합니다.
+        response = requests.post(WEBAPP_URL, data=payload)
+        
+        if response.status_code == 200:
+            print(f"📡 전송 결과: {response.text}")
+        else:
+            print(f"❌ 전송 실패 (상태 코드: {response.status_code})")
+            print(f"응답 내용: {response.text}")
+            
     except Exception as e:
-        print(f"❌ 전송 오류: {e}")
+        print(f"❌ 전송 중 예외 발생: {e}")
 
 if __name__ == "__main__":
     run_kakao_realtime_rank()
