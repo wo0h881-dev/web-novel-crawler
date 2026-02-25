@@ -1,24 +1,31 @@
-name: Kakao Rank Bot
+name: Update Kakao Ranking
+
 on:
   schedule:
-    - cron: '0 0 * * *' # 매일 오전 9시(한국시간)
-  workflow_dispatch:
+    # 매일 한국 시간 오전 9시에 자동 실행 (UTC 00:00)
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 버튼 눌러서 수동 실행 가능하게 함
 
 jobs:
-  run-bot:
+  build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
+
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
-          # [중요] --with-deps를 추가해야 리눅스 환경에서 브라우저가 정상 작동합니다.
-          playwright install chromium --with-deps 
-      - name: Run Crawler
-        run: python main.py
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4
+
+      - name: Run main.py
         env:
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          # 금고(Secrets)에 저장한 주소를 파이썬이 쓸 수 있게 연결
+          WEBAPP_URL: ${{ secrets.WEBAPP_URL }}
+        run: python main.py
