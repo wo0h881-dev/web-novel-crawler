@@ -81,19 +81,14 @@ def fetch_detail_info(detail_url: str):
 
 
 def fetch_naver_top20_raw():
-    """
-    네이버 시리즈 웹소설 일간 TOP 20을 랭킹 페이지 + 상세 페이지에서 수집.
-    """
     r = requests.get(RANKING_URL, headers=HEADERS)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
-    # TOP100 리스트 li 선택자
     lis = soup.select("#content > div > ul > li")
 
     items = []
     for rank, li in enumerate(lis[:20], start=1):
-        # 제목 / 상세 URL
         a = li.select_one("div.comic_cont h3 a") or li.select_one("h3 a")
         if not a:
             continue
@@ -104,11 +99,8 @@ def fetch_naver_top20_raw():
             href = BASE + href
         product_no = get_product_no_from_href(href)
 
-        # 썸네일 (규칙 기반)
-        thumbnail_url = f"{BASE}/novel/img/{product_no}/{product_no}.jpg"
-
-        # 상세 페이지에서 조회수 / 작가 / 장르
-        views, author, genre = fetch_detail_info(href)
+        # 🔥 상세 페이지에서 조회수 / 작가 / 장르 / 썸네일까지 한 번에
+        views, author, genre, thumbnail_url = fetch_detail_info(href)
 
         items.append(
             {
@@ -118,12 +110,13 @@ def fetch_naver_top20_raw():
                 "genre": genre,
                 "productNo": product_no,
                 "detail_url": href,
-                "thumbnail_url": thumbnail_url,
+                "thumbnail_url": thumbnail_url,  # 👈 여기
                 "views": views,
             }
         )
 
     return items
+
 
 
 def build_payload_for_google(raw_items):
