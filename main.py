@@ -1,83 +1,96 @@
-import requests
-from bs4 import BeautifulSoup
-import json
 import os
-import datetime
+import json
+import gspread
+import re
+from playwright.sync_api import sync_playwright
 
-def fetch_kakao_ranking():
-    # 카카오페이지 실시간 웹소설 랭킹
-    url = "https://page.kakao.com/menu/11/screen/37"
+def run_kakao_realtime_rank():
+    print("🚀 카카오페이지 [플랫폼 & 썸네일] 최종 보정 수집 시작...")
     
-    # 브라우저인 척 속이는 헤더 (매우 중요)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache"
-    }
-
     try:
-        response = requests.get(url, headers=headers, timeout=30)
-        response.encoding = 'utf-8'
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # 카카오페이지 아이템을 찾는 최신 셀렉터 (구조적 접근)
-        items = soup.find_all('div', class_=lambda x: x and 'flex-col' in x)
-        
-        results = []
-        today = datetime.datetime.now().strftime("%Y-%m-%d")
-
-        count = 0
-        for item in items:
-            # p 태그 중 굵은 글씨(제목)와 일반 글씨(작가)를 찾음
-            p_tags = item.find_all('p')
-            if len(p_tags) >= 2:
-                title = p_tags[0].text.strip()
-                author = p_tags[1].text.strip()
-                
-                # 순위나 '무료' 같은 키워드 제외 필터링
-                if title and len(title) > 1 and "위" not in title and count < 20:
-                    count += 1
-                    results.append({
-                        "rank": f"{count}위",
-                        "title": title,
-                        "author": author,
-                        "date": today
-                    })
-        
-        return results
+        creds_json = os.environ['GOOGLE_CREDENTIALS']
+        creds = json.loads(creds_json)
+        gc = gspread.service_account_from_dict(creds)
+        sheet_id = "1c2ax0-3t70NxvxL-cXeOCz9NYnSC9OhrzC0IOWSe5Lc" 
+        sh = gc.open_by_key(sheet_id).sheet1
     except Exception as e:
-        print(f"❌ 수집 중 에러: {e}")
-        return []
-
-def send_to_google_sheet(data):
-    # GitHub Secrets에 넣은 구글 앱스 스크립트 배포 URL
-    WEBAPP_URL = os.environ.get("WEBAPP_URL") 
-    
-    if not WEBAPP_URL:
-        print("❌ WEBAPP_URL이 설정되지 않았습니다.")
+        print(f"❌ 시트 연결 실패: {e}")
         return
 
-    payload = {
-        "source": "kakao",  # 구글 시트가 카카오 탭에 넣으라고 알려줌
-        "data": json.dumps(data)
-    }
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+        page = context.new_page()
+        
+        try:
+            url = "https://page.kakao.com/menu/10011/screen/94"
+            page.goto(url, wait_until="networkidle")
+            page.wait_for_timeout(5000)
+            
+            # 메인 화면 링크 수집
+            links = page.eval_on_selector_all('a[href*="/content/"]', 'elements => elements.map(e => e.href)')
+            unique_links = []
+            for link in links:
+                if link not in unique_links: unique_links.append(link)
 
-    try:
-        # 주소 뒤에 파라미터를 붙여서 전송
-        response = requests.get(WEBAPP_URL, params=payload)
-        print(f"📡 전송 결과: {response.text}")
-    except Exception as e:
-        print(f"❌ 전송 중 에러: {e}")
+            # 헤더 구성 (순서 중요!)
+            data_to_push = [["순위", "플랫폼", "타이틀", "작가", "장르", "조회수", "썸네일", "수집일"]]
+            
+            for i, link in enumerate(unique_links[:20]):
+                try:
+                    d_page = context.new_page()
+                    d_page.goto(link, wait_until="networkidle")
+                    d_page.wait_for_timeout(2500)
+
+                    # 1. 타이틀 및 썸네일
+                    title = d_page.locator('meta[property="og:title"]').get_attribute("content")
+                    thumbnail = d_page.locator('meta[property="og:image"]').get_attribute("content")
+                    
+                    # 2. 작가
+                    author = "-"
+                    author_el = d_page.locator('span.text-el-70.opacity-70').first
+                    if author_el.count() > 0:
+                        author = author_el.inner_text().strip()
+                    
+                    # 3. 장르 (성공했던 필터링 로직)
+                    genre = "-"
+                    genre_elements = d_page.locator('span.break-all.align-middle').all_inner_texts()
+                    if len(genre_elements) > 1:
+                        genre = [g for g in genre_elements if g != "웹소설"][0]
+                    elif len(genre_elements) == 1:
+                        genre = genre_elements[0].replace("웹소설", "").strip()
+
+                    # 4. 조회수
+                    body_text = d_page.evaluate("() => document.body.innerText")
+                    view_match = re.search(r'(\d+\.?\d*[만|억])', body_text)
+                    views = view_match.group(1) if view_match else "-"
+
+                    # [중요] 리스트 순서에 맞춰서 값 넣기
+                    # 순위, 플랫폼, 타이틀, 작가, 장르, 조회수, 썸네일, 수집일
+                    data_to_push.append([
+                        f"{i+1}위", 
+                        "카카오페이지", 
+                        title, 
+                        author, 
+                        genre, 
+                        views, 
+                        thumbnail, 
+                        "2026-02-25"
+                    ])
+                    print(f"✅ {i+1}위 완료: {title}")
+                    d_page.close()
+                except:
+                    continue
+
+            # 시트 업데이트
+            sh.clear()
+            sh.update('A1', data_to_push)
+            print("🎊 플랫폼과 썸네일까지 완벽하게 저장되었습니다!")
+
+        except Exception as e:
+            print(f"❌ 에러: {e}")
+        finally:
+            browser.close()
 
 if __name__ == "__main__":
-    print("🚀 카카오 자동 수집 시작...")
-    ranking_data = fetch_kakao_ranking()
-    
-    if ranking_data:
-        print(f"✅ {len(ranking_data)}개 수집 성공!")
-        send_to_google_sheet(ranking_data)
-    else:
-        # 이 메시지가 뜨면 카카오가 접속을 완전히 막은 것임
-        print("⚠️ 데이터를 찾지 못했습니다. 셀렉터 확인이 필요합니다.")
+    run_kakao_realtime_rank()
