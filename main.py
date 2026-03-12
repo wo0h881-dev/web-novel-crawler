@@ -46,14 +46,29 @@ def run_kakao_realtime_rank():
                     d_page.goto(link, wait_until="networkidle")
                     d_page.wait_for_timeout(2500)
 
+                    # 0) 정보 탭 클릭 (출판사/댓글이 정보 탭에 있음)
+                    try:
+                        info_tab = d_page.locator(
+                            'span.font-small1-bold.text-el-20',
+                            has_text="정보"
+                        ).first
+                        if info_tab.count() > 0:
+                            info_tab.click()
+                            d_page.wait_for_timeout(1000)
+                    except Exception:
+                        pass
+
+                    # 1) 타이틀 / 썸네일
                     title = d_page.locator('meta[property="og:title"]').get_attribute("content")
                     thumbnail = d_page.locator('meta[property="og:image"]').get_attribute("content")
 
+                    # 2) 작가
                     author = "-"
                     author_el = d_page.locator('span.text-el-70.opacity-70').first
                     if author_el.count() > 0:
                         author = author_el.inner_text().strip()
 
+                    # 3) 장르
                     genre = "-"
                     genre_elements = d_page.locator('span.break-all.align-middle').all_inner_texts()
                     if len(genre_elements) > 1:
@@ -61,31 +76,32 @@ def run_kakao_realtime_rank():
                     elif len(genre_elements) == 1:
                         genre = genre_elements[0].replace("웹소설", "").strip()
 
+                    # 4) 조회수 (본문 텍스트에서 첫 번째 '만/억' 패턴)
                     body_text = d_page.evaluate("() => document.body.innerText")
                     view_match = re.search(r'(\d+\.?\d*[만억])', body_text)
                     views = view_match.group(1) if view_match else "-"
 
-                    # 출판사
+                    # 5) 출판사: 정보 탭 내의 kwbooks 같은 텍스트
                     publisher = "-"
-                    publisher_block = d_page.locator(
-                        'div.font-small1.flex.w-full.pt-6pxr'
-                    ).filter(has_text="발행자").first
-                    if publisher_block.count() > 0:
-                        spans = publisher_block.locator("span")
-                        if spans.count() >= 2:
-                            publisher = spans.nth(1).inner_text().strip()
+                    pub_el = d_page.locator(
+                        'span.text-el-70.break-word-anywhere'
+                    ).first
+                    if pub_el.count() > 0:
+                        publisher = pub_el.inner_text().strip()
 
-                    # 평점
+                    # 6) 평점 (기존 로직 유지)
                     rating = "-"
                     rating_el = d_page.locator('img[alt="별점"] + span.text-el-70.opacity-70')
                     if rating_el.count() > 0:
                         rating = rating_el.inner_text().strip()
 
-                    # 댓글 수 (상단 요약 h3에 "댓글" 들어 있는 경우)
+                    # 7) 댓글 전체 수: "전체 60만" 같은 텍스트
                     comment_count = "-"
-                    comment_header = d_page.locator('h3:has-text("댓글") span').first
-                    if comment_header.count() > 0:
-                        comment_count = comment_header.inner_text().strip()
+                    comment_el = d_page.locator(
+                        'span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70'
+                    ).filter(has_text="전체").first
+                    if comment_el.count() > 0:
+                        comment_count = comment_el.inner_text().strip()  # "전체 60만"
 
                     final_results.append({
                         "rank": f"{i+1}위",
