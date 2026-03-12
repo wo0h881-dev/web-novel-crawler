@@ -101,7 +101,7 @@ def run_kakao_realtime_rank():
                     except Exception:
                         pass
 
-                    # 디버그용 (원하면 주석 처리)
+                    # 디버그용 (필요 없으면 주석 처리)
                     print("PUB:", publisher)
 
                     # 7) 평점
@@ -124,33 +124,32 @@ def run_kakao_realtime_rank():
                     except Exception:
                         pass
 
-                    # 9) 총 회차수: "전체 1,679" → "1679회"
+                    # 9) 총 회차수 & 댓글 수: 홈 영역 "전체 ..."들에서 분리
                     total_episodes = "-"
-                    try:
-                        ep_el = d_page.locator(
-                            'span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70'
-                        ).filter(has_text="전체").first
-                        if ep_el.count() > 0:
-                            ep_text = ep_el.inner_text().strip()   # "전체 1,679"
-                            m = re.search(r"(\d[\d,]*)", ep_text)
-                            if m:
-                                num = m.group(1).replace(",", "")
-                                total_episodes = f"{num}회"
-                    except Exception:
-                        pass
-
-                    # 10) 댓글 수: "전체 24.7만"에서 '전체'만 제거
                     comments = "-"
+
                     try:
-                        comment_spans = d_page.locator(
+                        spans = d_page.locator(
                             'span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70'
                         )
-                        if comment_spans.count() > 0:
-                            for idx in range(comment_spans.count()):
-                                t = comment_spans.nth(idx).inner_text().strip()
-                                if t.startswith("전체"):
-                                    comments = t.replace("전체", "", 1).strip()  # "24.7만"
-                                    break
+                        count = spans.count()
+                        if count > 0:
+                            for idx in range(count):
+                                t = spans.nth(idx).inner_text().strip()
+                                # "전체 1,679", "전체 24.7만" 같은 형식만 대상
+                                if not t.startswith("전체"):
+                                    continue
+                                core = t.replace("전체", "", 1).strip()  # "1,679" 또는 "24.7만"
+
+                                # 댓글: 만 단위가 있는 쪽
+                                if "만" in core:
+                                    comments = core              # 예: "24.7만"
+                                # 회차: 만이 없고 숫자만 → NNNN회
+                                else:
+                                    m = re.search(r"(\d[\d,]*)", core)
+                                    if m:
+                                        num = m.group(1).replace(",", "")
+                                        total_episodes = f"{num}회"  # 예: "1679회"
                     except Exception:
                         pass
 
