@@ -8,6 +8,7 @@ import requests
 import datetime
 from playwright.sync_api import sync_playwright
 
+
 def run_kakao_realtime_rank():
     print("🚀 카카오페이지 수집 시작...")
 
@@ -23,10 +24,12 @@ def run_kakao_realtime_rank():
         page = context.new_page()
 
         try:
+            # 실시간 랭킹 페이지
             url = "https://page.kakao.com/menu/10011/screen/94"
             page.goto(url, wait_until="networkidle")
             page.wait_for_timeout(5000)
 
+            # 작품 링크 수집
             links = page.eval_on_selector_all(
                 'a[href*="/content/"]',
                 'elements => elements.map(e => e.href)'
@@ -39,6 +42,7 @@ def run_kakao_realtime_rank():
             final_results = []
             today = datetime.datetime.now().strftime("%Y-%m-%d")
 
+            # 상위 20개 상세 정보 수집
             for i, link in enumerate(unique_links[:20]):
                 d_page = None
                 try:
@@ -46,7 +50,7 @@ def run_kakao_realtime_rank():
                     d_page.goto(link, wait_until="networkidle")
                     d_page.wait_for_timeout(2500)
 
-                    # 0) 홈 탭/정보 탭 모두 로딩 위해 잠깐 대기
+                    # 0) 기본 대기
                     d_page.wait_for_timeout(1000)
 
                     # 1) 타이틀 / 썸네일
@@ -97,15 +101,18 @@ def run_kakao_realtime_rank():
                     except Exception:
                         pass
 
-                    print("PUB:", publisher)  # 👈 여기
+                    # 디버그용 (원하면 주석 처리)
+                    print("PUB:", publisher)
 
                     # 7) 평점
                     rating = "-"
-                    rating_el = d_page.locator('img[alt="별점"] + span.text-el-70.opacity-70')
+                    rating_el = d_page.locator(
+                        'img[alt="별점"] + span.text-el-70.opacity-70'
+                    )
                     if rating_el.count() > 0:
                         rating = rating_el.inner_text().strip()
 
-                    # 8) 다시 홈 탭으로 이동 (회차수/댓글수 홈 영역 기준)
+                    # 8) 다시 홈 탭으로 이동 (회차수/댓글수 홈 기준)
                     try:
                         home_tab = d_page.locator(
                             'span.font-small1-bold.text-el-20',
@@ -117,36 +124,35 @@ def run_kakao_realtime_rank():
                     except Exception:
                         pass
 
-                   # 9) 총 회차수: "전체 1,679" → "1679회"
-total_episodes = "-"
-try:
-    ep_el = d_page.locator(
-        'span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70'
-    ).filter(has_text="전체").first
-    if ep_el.count() > 0:
-        ep_text = ep_el.inner_text().strip()   # "전체 1,679"
-        m = re.search(r"(\d[\d,]*)", ep_text)
-        if m:
-            num = m.group(1).replace(",", "")
-            total_episodes = f"{num}회"
-except Exception:
-    pass
+                    # 9) 총 회차수: "전체 1,679" → "1679회"
+                    total_episodes = "-"
+                    try:
+                        ep_el = d_page.locator(
+                            'span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70'
+                        ).filter(has_text="전체").first
+                        if ep_el.count() > 0:
+                            ep_text = ep_el.inner_text().strip()   # "전체 1,679"
+                            m = re.search(r"(\d[\d,]*)", ep_text)
+                            if m:
+                                num = m.group(1).replace(",", "")
+                                total_episodes = f"{num}회"
+                    except Exception:
+                        pass
 
-                  # 10) 댓글 수: "전체 24.7만"에서 '전체 '만 제거
-comments = "-"
-try:
-    comment_spans = d_page.locator(
-        'span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70'
-    )
-    if comment_spans.count() > 0:
-        for idx in range(comment_spans.count()):
-            t = comment_spans.nth(idx).inner_text().strip()
-            if t.startswith("전체"):
-                comments = t.replace("전체", "", 1).strip()  # "24.7만"
-                break
-except Exception:
-    pass
-
+                    # 10) 댓글 수: "전체 24.7만"에서 '전체'만 제거
+                    comments = "-"
+                    try:
+                        comment_spans = d_page.locator(
+                            'span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70'
+                        )
+                        if comment_spans.count() > 0:
+                            for idx in range(comment_spans.count()):
+                                t = comment_spans.nth(idx).inner_text().strip()
+                                if t.startswith("전체"):
+                                    comments = t.replace("전체", "", 1).strip()  # "24.7만"
+                                    break
+                    except Exception:
+                        pass
 
                     final_results.append({
                         "rank": f"{i+1}위",
@@ -176,6 +182,7 @@ except Exception:
         finally:
             browser.close()
 
+
 def send_to_unified_sheet(data):
     WEBAPP_URL = os.environ.get("WEBAPP_URL")
     if not WEBAPP_URL:
@@ -193,6 +200,7 @@ def send_to_unified_sheet(data):
         print("📡 KAKAO 응답:", response.text)
     except Exception as e:
         print(f"❌ 전송 중 예외 발생: {e}")
+
 
 if __name__ == "__main__":
     run_kakao_realtime_rank()
