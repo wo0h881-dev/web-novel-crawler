@@ -76,32 +76,37 @@ def run_kakao_realtime_rank():
                     view_match = re.search(r'(\d+\.?\d*[만억])', body_text)
                     views = view_match.group(1) if view_match else "-"
 
-                    # 5) 정보 탭으로 이동 (발행자용)
+                    # 5) 정보 탭으로 이동 (발행자용) + 디버그
                     try:
                         info_tab = d_page.locator(
                             'span.font-small1-bold.text-el-20',
                             has_text="정보"
                         ).first
-                        if info_tab.count() > 0:
+                        info_count = info_tab.count()
+                        print("INFO_TAB_COUNT:", info_count)
+                        if info_count > 0:
                             info_tab.click()
                             d_page.wait_for_timeout(800)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print("INFO_TAB_ERR:", e)
 
-                    # 6) 출판사: "발행자" 라벨 줄의 두 번째 span
+                    # 6) 출판사: "발행자" 라벨 줄의 두 번째 span (느슨한 셀렉터) + 디버그
                     publisher = "-"
                     try:
-                        publisher_row = d_page.locator(
-                            'div.font-small1.flex.w-full.pt-6pxr'
-                        ).filter(has_text="발행자").first
-                        if publisher_row.count() > 0:
+                        publisher_row = d_page.locator('div.font-small1').filter(
+                            has_text="발행자"
+                        ).first
+                        row_count = publisher_row.count()
+                        print("PUB_ROW_COUNT:", row_count)
+                        if row_count > 0:
                             spans = publisher_row.locator("span")
-                            if spans.count() >= 2:
+                            span_count = spans.count()
+                            print("PUB_SPAN_COUNT:", span_count)
+                            if span_count >= 2:
                                 publisher = spans.nth(1).inner_text().strip()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print("PUB_ERR:", e)
 
-                    # 디버그용 (필요 없으면 주석 처리)
                     print("PUB:", publisher)
 
                     # 7) 평점
@@ -121,8 +126,8 @@ def run_kakao_realtime_rank():
                         if home_tab.count() > 0:
                             home_tab.click()
                             d_page.wait_for_timeout(800)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print("HOME_TAB_ERR:", e)
 
                     # 9) 총 회차수 & 댓글 수: 홈 영역 "전체 ..."들에서 분리
                     total_episodes = "-"
@@ -150,8 +155,8 @@ def run_kakao_realtime_rank():
                                     if m:
                                         num = m.group(1).replace(",", "")
                                         total_episodes = f"{num}회"  # 예: "1679회"
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print("EP/COMMENT_ERR:", e)
 
                     final_results.append({
                         "rank": f"{i+1}위",
