@@ -76,7 +76,7 @@ def run_kakao_realtime_rank():
                     view_match = re.search(r'(\d+\.?\d*[만억])', body_text)
                     views = view_match.group(1) if view_match else "-"
 
-                    # 5) 정보 탭으로 이동 (발행자용) - 실제 DOM에 맞춘 셀렉터
+                    # 5) 정보 탭으로 이동 (발행자용)
                     try:
                         info_tab = d_page.locator(
                             'span.font-small1',
@@ -129,12 +129,12 @@ def run_kakao_realtime_rank():
                     except Exception as e:
                         print("HOME_TAB_ERR:", e)
 
-                    # 9) 총 회차수 & 댓글 수: 부모 div 기준 1번째/2번째 블록 분리
+                    # 9) 총 회차수 & 댓글 수
                     total_episodes = "-"
                     comments = "-"
 
                     try:
-                        # 회차수 쪽 컨테이너 (첫 번째)
+                        # 회차수 컨테이너 (첫 번째)
                         episode_container = d_page.locator(
                             'div.flex.h-full.flex-1.items-center.space-x-8pxr'
                         ).first
@@ -149,7 +149,7 @@ def run_kakao_realtime_rank():
                                     num = m.group(1).replace(",", "")
                                     total_episodes = f"{num}회"
 
-                        # 댓글 쪽 컨테이너 (두 번째)
+                        # 댓글 컨테이너 (두 번째)
                         comment_container = d_page.locator(
                             'div.flex.h-full.flex-1.items-center.space-x-8pxr'
                         ).nth(1)
@@ -158,10 +158,15 @@ def run_kakao_realtime_rank():
                                 'span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70'
                             ).first
                             if c_text_el.count() > 0:
-                                c_text = c_text_el.inner_text().strip()   # "전체 7,171"
-                                m2 = re.search(r"(\d[\d,]*)", c_text)
+                                c_text = c_text_el.inner_text().strip()   # "전체 7,171" 또는 "전체 1.6만"
+                                # 숫자 + 선택적 소수점까지
+                                m2 = re.search(r"([\d.,]+)", c_text)
                                 if m2:
-                                    comments = m2.group(1).replace(",", "")
+                                    core = m2.group(1)  # "7,171" 또는 "1.6"
+                                    if "만" in c_text:
+                                        comments = core + "만"     # "1.6만"
+                                    else:
+                                        comments = core.replace(",", "")  # "7171"
                     except Exception as e:
                         print("EP/COMMENT_ERR:", e)
 
