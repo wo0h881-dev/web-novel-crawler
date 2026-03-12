@@ -1,4 +1,4 @@
-# naver.py
+# naver.py : 네이버 시리즈 웹소설 TOP 20 크롤링 후 구글 웹앱으로 전송
 import os
 import json
 import datetime
@@ -94,7 +94,7 @@ def fetch_detail_info(detail_url: str):
         if em:
             rating = em.get_text(strip=True)
 
-    # 7) 댓글 전체 수: <h3 class="_title_16c5c_14">댓글<span class="_total_16c5c_19">10,281</span></h3>
+    # 7) 댓글 전체 수
     comment_count = "-"
     comment_header = soup.find(
         lambda tag: tag.name == "h3"
@@ -150,7 +150,7 @@ def fetch_naver_top20_raw():
                 "detail_url": href,
                 "thumbnail_url": thumbnail_url,
                 "views": views,
-                "publisher": publisher,
+                "출판사": publisher,
                 "rating": rating,
                 "comments": comment_count,
             }
@@ -172,7 +172,7 @@ def build_payload_for_google(raw_items):
                 "genre": item.get("genre", "웹소설"),
                 "views": item.get("views", "-"),
                 "thumbnail": item.get("thumbnail_url", "-"),
-                "publisher": item.get("publisher", "-"),
+                "출판사": item.get("출판사", "-"),
                 "rating": item.get("rating", "-"),
                 "comments": item.get("comments", "-"),
             }
