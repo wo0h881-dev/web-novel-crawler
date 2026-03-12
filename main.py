@@ -46,17 +46,8 @@ def run_kakao_realtime_rank():
                     d_page.goto(link, wait_until="networkidle")
                     d_page.wait_for_timeout(2500)
 
-                    # 0) 정보 탭 클릭 (상세정보 탭)
-                    try:
-                        info_tab = d_page.locator(
-                            'span.font-small1-bold.text-el-20',
-                            has_text="정보"
-                        ).first
-                        if info_tab.count() > 0:
-                            info_tab.click()
-                            d_page.wait_for_timeout(1000)
-                    except Exception:
-                        pass
+                    # 0) 홈 탭/정보 탭 모두 로딩 위해 잠깐 대기
+                    d_page.wait_for_timeout(1000)
 
                     # 1) 타이틀 / 썸네일
                     title = d_page.locator('meta[property="og:title"]').get_attribute("content")
@@ -81,7 +72,19 @@ def run_kakao_realtime_rank():
                     view_match = re.search(r'(\d+\.?\d*[만억])', body_text)
                     views = view_match.group(1) if view_match else "-"
 
-                    # 5) 출판사: "발행자" 라벨 줄의 두 번째 span
+                    # 5) 정보 탭으로 이동 (발행자용)
+                    try:
+                        info_tab = d_page.locator(
+                            'span.font-small1-bold.text-el-20',
+                            has_text="정보"
+                        ).first
+                        if info_tab.count() > 0:
+                            info_tab.click()
+                            d_page.wait_for_timeout(800)
+                    except Exception:
+                        pass
+
+                    # 6) 출판사: "발행자" 라벨 줄의 두 번째 span
                     publisher = "-"
                     try:
                         publisher_row = d_page.locator(
@@ -94,28 +97,55 @@ def run_kakao_realtime_rank():
                     except Exception:
                         pass
 
-                    # 6) 평점
+                    # 7) 평점
                     rating = "-"
                     rating_el = d_page.locator('img[alt="별점"] + span.text-el-70.opacity-70')
                     if rating_el.count() > 0:
                         rating = rating_el.inner_text().strip()
 
-                    # 7) 총 회차수: "총 NN화" 형태 (본문 텍스트에서 찾기)
-                    total_episodes = "-"
-                    ep_match = re.search(r"총\s*([\d,]+)\s*화", body_text)
-                    if ep_match:
-                        total_episodes = ep_match.group(1)
+                    # 8) 다시 홈 탭으로 이동 (회차수/댓글수 홈 영역 기준)
+                    try:
+                        home_tab = d_page.locator(
+                            'span.font-small1-bold.text-el-20',
+                            has_text="홈"
+                        ).first
+                        if home_tab.count() > 0:
+                            home_tab.click()
+                            d_page.wait_for_timeout(800)
+                    except Exception:
+                        pass
 
-                    # 8) 댓글 수: "댓글 NN" 형태 (버튼/텍스트에서 추출)
+                    # 9) 총 회차수: "전체 1,679" 형식에서 숫자만
+                    total_episodes = "-"
+                    try:
+                        ep_el = d_page.locator(
+                            'span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70'
+                        ).filter(has_text="전체").first
+                        if ep_el.count() > 0:
+                            ep_text = ep_el.inner_text().strip()   # "전체 1,679"
+                            m = re.search(r"(\d[\d,]*)", ep_text)
+                            if m:
+                                total_episodes = m.group(1).replace(",", "")
+                    except Exception:
+                        pass
+
+                    # 10) 댓글 수: 홈 영역 우측의 "전체 24.7만"에서 숫자만
                     comments = "-"
                     try:
-                        # 댓글 탭/버튼에서 "댓글" + 숫자 찾기 (필요시 셀렉터 조정)
-                        comment_btn = d_page.locator('button:has-text("댓글")').first
-                        if comment_btn.count() > 0:
-                            c_text = comment_btn.inner_text().strip()
-                            m = re.search(r"댓글\s*([\d,]+)", c_text)
-                            if m:
-                                comments = m.group(1)
+                        # 회차 '전체 NN' 과 구분하기 위해 두 번째 "전체"를 노려보거나,
+                        # 전체 span들 중에서 '만'이 들어간 것을 우선 사용
+                        comment_spans = d_page.locator(
+                            'span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70'
+                        )
+                        if comment_spans.count() > 0:
+                            for idx in range(comment_spans.count()):
+                                t = comment_spans.nth(idx).inner_text().strip()
+                                # 댓글 쪽은 대개 "전체 24.7만" 처럼 만 단위가 붙는 경우가 많음
+                                if "만" in t or "개" in t:
+                                    m2 = re.search(r"([\d.,]+)", t)
+                                    if m2:
+                                        comments = m2.group(1)
+                                        break
                     except Exception:
                         pass
 
