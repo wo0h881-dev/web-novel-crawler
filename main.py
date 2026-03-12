@@ -147,7 +147,7 @@ def run_kakao_realtime_rank():
                                 m = re.search(r"(\d[\d,]*)", ep_text)
                                 if m:
                                     num = m.group(1).replace(",", "")
-                                    total_episodes = f"{num}회"
+                                    total_episodes = f"{num}화"
 
                         # 댓글 컨테이너 (두 번째)
                         comment_container = d_page.locator(
