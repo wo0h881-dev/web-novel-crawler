@@ -1,6 +1,7 @@
 # main.py
+
 from naver import run_naver
-from ridi import run_ridi  # ← 이 줄을 따로
+from ridi import run_ridi
 
 import os
 import json
@@ -8,7 +9,6 @@ import re
 import requests
 import datetime
 from playwright.sync_api import sync_playwright
-
 
 
 def run_kakao_realtime_rank():
@@ -161,7 +161,6 @@ def run_kakao_realtime_rank():
                             ).first
                             if c_text_el.count() > 0:
                                 c_text = c_text_el.inner_text().strip()   # "전체 7,171" 또는 "전체 1.6만"
-                                # 숫자 + 선택적 소수점까지
                                 m2 = re.search(r"([\d.,]+)", c_text)
                                 if m2:
                                     core = m2.group(1)  # "7,171" 또는 "1.6"
@@ -193,9 +192,9 @@ def run_kakao_realtime_rank():
                     if d_page:
                         d_page.close()
 
-            send_to_unified_sheet(final_results)
+            send_to_unified_sheet(final_results, source="kakao")
 
-       except Exception as e:
+        except Exception as e:
             print(f"❌ 카카오 랭킹 에러: {e}")
         finally:
             browser.close()
@@ -222,7 +221,7 @@ def send_to_unified_sheet(data, source="kakao"):
 
 def run_ridi_all():
     print("🚀 리디 수집 시작...")
-    results = run_ridi()  # ridi.py에서 가져온 리스트
+    results = run_ridi()
     if not results:
         print("⚠ 리디 결과 없음")
         return
