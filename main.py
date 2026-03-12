@@ -97,6 +97,8 @@ def run_kakao_realtime_rank():
                     except Exception:
                         pass
 
+                    print("PUB:", publisher)  # 👈 여기
+
                     # 7) 평점
                     rating = "-"
                     rating_el = d_page.locator('img[alt="별점"] + span.text-el-70.opacity-70')
