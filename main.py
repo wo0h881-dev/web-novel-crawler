@@ -46,7 +46,7 @@ def run_kakao_realtime_rank():
                     d_page.goto(link, wait_until="networkidle")
                     d_page.wait_for_timeout(2500)
 
-                    # 0) 정보 탭 클릭 (출판사/댓글이 정보 탭에 있음)
+                    # 0) 정보 탭 클릭 (상세정보 탭)
                     try:
                         info_tab = d_page.locator(
                             'span.font-small1-bold.text-el-20',
@@ -81,27 +81,43 @@ def run_kakao_realtime_rank():
                     view_match = re.search(r'(\d+\.?\d*[만억])', body_text)
                     views = view_match.group(1) if view_match else "-"
 
-                    # 5) 출판사: 정보 탭 내의 kwbooks 같은 텍스트
+                    # 5) 출판사: "발행자" 라벨 줄의 두 번째 span
                     publisher = "-"
-                    pub_el = d_page.locator(
-                        'span.text-el-70.break-word-anywhere'
-                    ).first
-                    if pub_el.count() > 0:
-                        publisher = pub_el.inner_text().strip()
+                    try:
+                        publisher_row = d_page.locator(
+                            'div.font-small1.flex.w-full.pt-6pxr'
+                        ).filter(has_text="발행자").first
+                        if publisher_row.count() > 0:
+                            spans = publisher_row.locator("span")
+                            if spans.count() >= 2:
+                                publisher = spans.nth(1).inner_text().strip()
+                    except Exception:
+                        pass
 
-                    # 6) 평점 (기존 로직 유지)
+                    # 6) 평점
                     rating = "-"
                     rating_el = d_page.locator('img[alt="별점"] + span.text-el-70.opacity-70')
                     if rating_el.count() > 0:
                         rating = rating_el.inner_text().strip()
 
-                    # 7) 댓글 전체 수: "전체 60만" 같은 텍스트
-                    comment_count = "-"
-                    comment_el = d_page.locator(
-                        'span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70'
-                    ).filter(has_text="전체").first
-                    if comment_el.count() > 0:
-                        comment_count = comment_el.inner_text().strip()  # "전체 60만"
+                    # 7) 총 회차수: "총 NN화" 형태 (본문 텍스트에서 찾기)
+                    total_episodes = "-"
+                    ep_match = re.search(r"총\s*([\d,]+)\s*화", body_text)
+                    if ep_match:
+                        total_episodes = ep_match.group(1)
+
+                    # 8) 댓글 수: "댓글 NN" 형태 (버튼/텍스트에서 추출)
+                    comments = "-"
+                    try:
+                        # 댓글 탭/버튼에서 "댓글" + 숫자 찾기 (필요시 셀렉터 조정)
+                        comment_btn = d_page.locator('button:has-text("댓글")').first
+                        if comment_btn.count() > 0:
+                            c_text = comment_btn.inner_text().strip()
+                            m = re.search(r"댓글\s*([\d,]+)", c_text)
+                            if m:
+                                comments = m.group(1)
+                    except Exception:
+                        pass
 
                     final_results.append({
                         "rank": f"{i+1}위",
@@ -113,9 +129,11 @@ def run_kakao_realtime_rank():
                         "thumbnail": thumbnail,
                         "출판사": publisher,
                         "rating": rating,
-                        "comments": comment_count,
+                        "totalEpisodes": total_episodes,
+                        "comments": comments,
                     })
                     print(f"✅ {i+1}위 완료: {title}")
+
                 except Exception as e:
                     print(f"❌ 카카오 상세({i+1}위) 에러: {e}")
                 finally:
