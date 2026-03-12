@@ -1,5 +1,5 @@
 # main.py
-from naver import run_naver
+from naver import run_naver import run_ridi
 
 import os
 import json
@@ -193,31 +193,42 @@ def run_kakao_realtime_rank():
 
             send_to_unified_sheet(final_results)
 
-        except Exception as e:
+       except Exception as e:
             print(f"❌ 카카오 랭킹 에러: {e}")
         finally:
             browser.close()
 
 
-def send_to_unified_sheet(data):
+def send_to_unified_sheet(data, source="kakao"):
     WEBAPP_URL = os.environ.get("WEBAPP_URL")
     if not WEBAPP_URL:
         print("❌ WEBAPP_URL이 없습니다.")
         return
 
     payload = {
-        "source": "kakao",
+        "source": source,
         "data": json.dumps(data),
     }
 
     try:
         response = requests.post(WEBAPP_URL, data=payload)
-        print("📡 KAKAO 상태코드:", response.status_code)
-        print("📡 KAKAO 응답:", response.text)
+        print(f"📡 {source.upper()} 상태코드:", response.status_code)
+        print(f"📡 {source.upper()} 응답:", response.text)
     except Exception as e:
-        print(f"❌ 전송 중 예외 발생: {e}")
+        print(f"❌ {source} 전송 중 예외 발생: {e}")
+
+
+def run_ridi_all():
+    print("🚀 리디 수집 시작...")
+    results = run_ridi()  # ridi.py에서 가져온 리스트
+    if not results:
+        print("⚠ 리디 결과 없음")
+        return
+    send_to_unified_sheet(results, source="ridi")
+    print("✅ 리디 전송 완료")
 
 
 if __name__ == "__main__":
     run_kakao_realtime_rank()
     run_naver()
+    run_ridi_all()
