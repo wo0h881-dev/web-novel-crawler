@@ -1,5 +1,6 @@
 # main.py
-from naver import run_naver import run_ridi
+from naver import run_naver
+from ridi import run_ridi  # ← 이 줄을 따로
 
 import os
 import json
@@ -7,6 +8,7 @@ import re
 import requests
 import datetime
 from playwright.sync_api import sync_playwright
+
 
 
 def run_kakao_realtime_rank():
