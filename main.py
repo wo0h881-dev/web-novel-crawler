@@ -9,8 +9,8 @@ import datetime
 from playwright.sync_api import sync_playwright
 
 def run_kakao_realtime_rank():
-    print("🚀 카카오페이지 [발행자·평점·댓글 포함] 수집 시작...")
-    
+    print("🚀 카카오페이지 수집 시작...")
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
@@ -21,12 +21,12 @@ def run_kakao_realtime_rank():
             )
         )
         page = context.new_page()
-        
+
         try:
             url = "https://page.kakao.com/menu/10011/screen/94"
             page.goto(url, wait_until="networkidle")
             page.wait_for_timeout(5000)
-            
+
             links = page.eval_on_selector_all(
                 'a[href*="/content/"]',
                 'elements => elements.map(e => e.href)'
@@ -38,7 +38,7 @@ def run_kakao_realtime_rank():
 
             final_results = []
             today = datetime.datetime.now().strftime("%Y-%m-%d")
-            
+
             for i, link in enumerate(unique_links[:20]):
                 d_page = None
                 try:
@@ -48,12 +48,12 @@ def run_kakao_realtime_rank():
 
                     title = d_page.locator('meta[property="og:title"]').get_attribute("content")
                     thumbnail = d_page.locator('meta[property="og:image"]').get_attribute("content")
-                    
+
                     author = "-"
                     author_el = d_page.locator('span.text-el-70.opacity-70').first
                     if author_el.count() > 0:
                         author = author_el.inner_text().strip()
-                    
+
                     genre = "-"
                     genre_elements = d_page.locator('span.break-all.align-middle').all_inner_texts()
                     if len(genre_elements) > 1:
@@ -65,7 +65,7 @@ def run_kakao_realtime_rank():
                     view_match = re.search(r'(\d+\.?\d*[만억])', body_text)
                     views = view_match.group(1) if view_match else "-"
 
-                    # 발행자
+                    # 출판사
                     publisher = "-"
                     publisher_block = d_page.locator(
                         'div.font-small1.flex.w-full.pt-6pxr'
@@ -81,7 +81,7 @@ def run_kakao_realtime_rank():
                     if rating_el.count() > 0:
                         rating = rating_el.inner_text().strip()
 
-                    # 댓글 수 (상단 요약: h3 제목이 "댓글"인 곳의 span)
+                    # 댓글 수 (상단 요약 h3에 "댓글" 들어 있는 경우)
                     comment_count = "-"
                     comment_header = d_page.locator('h3:has-text("댓글") span').first
                     if comment_header.count() > 0:
@@ -95,7 +95,7 @@ def run_kakao_realtime_rank():
                         "genre": genre,
                         "views": views,
                         "thumbnail": thumbnail,
-                        "publisher": publisher,
+                        "출판사": publisher,
                         "rating": rating,
                         "comments": comment_count,
                     })
