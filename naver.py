@@ -31,20 +31,33 @@ def get_product_no_from_href(href: str) -> str:
 
 def fetch_detail_info(detail_url: str):
     """
-    상세 페이지에서 조회수, 작가명, 장르, 썸네일, 출판사, 평점, 댓글 수를 가져온다.
-    반환: (views, author, genre, thumbnail_url, publisher, rating, comment_count)
+    상세 페이지에서 조회수, 작가명, 장르, 썸네일, 출판사, 평점, 댓글 수, 총 회차수를 가져온다.
+    반환: (views, author, genre, thumbnail_url, publisher, rating, comment_count, total_episodes)
     """
     r = requests.get(detail_url, headers=HEADERS)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
-    # 1) 조회수
+    # 1) 조회수 (942.4만 같은 값)
     views = "-"
-    for span in soup.select("span"):
-        text = span.get_text(strip=True)
-        if any(u in text for u in ["만", "억"]) and any(ch.isdigit() for ch in text):
-            views = text
-            break
+    # 조회수/댓글이 같이 있는 영역에서 조회수 span은 class 없이 들어오는 경우가 많아서
+    # 먼저 다운로드 버튼 안의 span을 조회수로 사용
+    try:
+        dl_btn = soup.select_one("a.btn_download span")
+        if dl_btn:
+            text = dl_btn.get_text(strip=True)
+            # ex) "942.4만"
+            if any(u in text for u in ["만", "억"]) and any(ch.isdigit() for ch in text):
+                views = text
+    except Exception:
+        pass
+
+    if views == "-":
+        for span in soup.select("span"):
+            text = span.get_text(strip=True)
+            if any(u in text for u in ["만", "억"]) and any(ch.isdigit() for ch in text):
+                views = text
+                break
 
     # 2) 작가
     author = "-"
@@ -96,22 +109,37 @@ def fetch_detail_info(detail_url: str):
         if em:
             rating = em.get_text(strip=True)
 
-    # 7) 댓글 전체 수 (숫자만 추출)
+    # 7) 댓글 수: 상단 영역의 <span id="commentCount">1.1만</span>
     comment_count = "-"
-    comment_header = soup.find(
-        lambda tag: tag.name == "h3"
-        and "댓글" in tag.get_text()
-        and tag.find("span")
-    )
-    if comment_header:
-        total_span = comment_header.find("span")
-        if total_span:
-            text = total_span.get_text(strip=True)   # 예: "10,281" 또는 "전체 10,281"
-            m = re.search(r"(\d[\d,]*)", text)
-            if m:
-                comment_count = m.group(1).replace(",", "")
+    try:
+        c_span = soup.select_one("span#commentCount")
+        if c_span:
+            comment_count = c_span.get_text(strip=True)  # "1.1만" 또는 "10,281"
+    except Exception:
+        pass
 
-    return views, author, genre, thumbnail_url, publisher, rating, comment_count
+    # 8) 총 회차수: <h5 class="end_total_episode">총 <strong>181</strong>화</h5>
+    total_episodes = "-"
+    try:
+        ep_header = soup.select_one("h5.end_total_episode")
+        if ep_header:
+            strong = ep_header.find("strong")
+            if strong:
+                num = strong.get_text(strip=True)  # "181"
+                total_episodes = f"{num}화"
+    except Exception:
+        pass
+
+    return (
+        views,
+        author,
+        genre,
+        thumbnail_url,
+        publisher,
+        rating,
+        comment_count,
+        total_episodes,
+    )
 
 
 def fetch_naver_top20_raw():
@@ -141,6 +169,7 @@ def fetch_naver_top20_raw():
             publisher,
             rating,
             comment_count,
+            total_episodes,
         ) = fetch_detail_info(href)
 
         items.append(
@@ -156,6 +185,7 @@ def fetch_naver_top20_raw():
                 "출판사": publisher,
                 "rating": rating,
                 "comments": comment_count,
+                "totalEpisodes": total_episodes,
             }
         )
 
@@ -178,7 +208,8 @@ def build_payload_for_google(raw_items):
                 "thumbnail": item.get("thumbnail_url", "-"),
                 "출판사": item.get("출판사", "-"),
                 "rating": item.get("rating", "-"),
-                "comments": item.get("comments", "-"),
+                "comments": item.get("comments", "-"),       # 예: "1.1만" / "10,281"
+                "totalEpisodes": item.get("totalEpisodes", "-"),  # 예: "181화"
             }
         )
     return result
