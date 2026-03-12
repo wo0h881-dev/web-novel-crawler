@@ -23,9 +23,11 @@ HEADERS = {
 
 WEBAPP_URL = os.environ.get("WEBAPP_URL")
 
+
 def get_product_no_from_href(href: str) -> str:
     qs = parse_qs(urlparse(href).query)
     return qs.get("productNo", [""])[0]
+
 
 def fetch_detail_info(detail_url: str):
     """
@@ -94,7 +96,7 @@ def fetch_detail_info(detail_url: str):
         if em:
             rating = em.get_text(strip=True)
 
-    # 7) 댓글 전체 수
+    # 7) 댓글 전체 수 (숫자만 추출)
     comment_count = "-"
     comment_header = soup.find(
         lambda tag: tag.name == "h3"
@@ -104,12 +106,13 @@ def fetch_detail_info(detail_url: str):
     if comment_header:
         total_span = comment_header.find("span")
         if total_span:
-            text = total_span.get_text(strip=True)
+            text = total_span.get_text(strip=True)   # 예: "10,281" 또는 "전체 10,281"
             m = re.search(r"(\d[\d,]*)", text)
             if m:
-                comment_count = m.group(1)
+                comment_count = m.group(1).replace(",", "")
 
     return views, author, genre, thumbnail_url, publisher, rating, comment_count
+
 
 def fetch_naver_top20_raw():
     r = requests.get(RANKING_URL, headers=HEADERS)
@@ -158,6 +161,7 @@ def fetch_naver_top20_raw():
 
     return items
 
+
 def build_payload_for_google(raw_items):
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     result = []
@@ -179,6 +183,7 @@ def build_payload_for_google(raw_items):
         )
     return result
 
+
 def send_to_google_webapp(data):
     if not WEBAPP_URL:
         print("❌ WEBAPP_URL 환경변수가 없습니다.")
@@ -193,12 +198,14 @@ def send_to_google_webapp(data):
     print("📡 NAVER 상태코드:", resp.status_code)
     print("📡 NAVER 응답:", resp.text)
 
+
 def run_naver():
     print("🚀 네이버 시리즈 TOP20 수집 시작...")
     raw_items = fetch_naver_top20_raw()
     data_for_sheet = build_payload_for_google(raw_items)
     send_to_google_webapp(data_for_sheet)
     print("✅ 네이버 전송 완료")
+
 
 if __name__ == "__main__":
     run_naver()
