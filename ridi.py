@@ -19,14 +19,17 @@ HEADERS = {
     )
 }
 
+
 def fetch_html(url: str) -> BeautifulSoup:
     resp = requests.get(url, headers=HEADERS, timeout=10)
     resp.raise_for_status()
     return BeautifulSoup(resp.text, "html.parser")
 
+
 def parse_list(list_url: str, category_key: str):
     soup = fetch_html(list_url)
 
+    # 작품 카드 리스트 확보
     cards = []
     for a in soup.select("a.fig-w1hthz"):
         card = a.find_parent("li")
@@ -55,6 +58,11 @@ def parse_list(list_url: str, category_key: str):
         publisher = publisher_tag.get_text(strip=True) if publisher_tag else "-"
         genre = genre_tag.get_text(strip=True) if genre_tag else "-"
 
+        # ✅ BL 베스트 페이지에서 온 작품은 상단 카테고리를 BL로 고정
+        # (리스트 장르가 현대물/역사/판타지물 등으로 찍혀도 최종 장르는 BL)
+        if category_key == "bl":
+            genre = "BL"
+
         total_ep_tag = item.select_one("span.fig-w746bu span")
         total_episodes = total_ep_tag.get_text(strip=True) if total_ep_tag else "-"
 
@@ -64,23 +72,26 @@ def parse_list(list_url: str, category_key: str):
         if rating_block:
             texts = [t for t in rating_block.stripped_strings]
             if texts:
-                rating = texts[0]                 # "5.0"
+                rating = texts[0]  # "5.0"
             if len(texts) > 1:
                 ridi_rating_count = texts[1].strip("()")  # "1,250"
 
+        # ✅ 프로모션(★) vs 숫자 랭크 구분
         badge = item.select_one("div.fig-ty289v")
         is_promotion = False
         rank_value = "-"
         if badge:
             badge_text = badge.get_text(strip=True)
             if badge_text.isdigit():
+                # "1" -> "1위"
                 rank_value = f"{int(badge_text)}위"
             else:
+                # SVG 아이콘이 있으면 프로모션 슬롯(★)
                 if badge.select_one("svg"):
                     is_promotion = True
                     rank_value = "프로모션"
 
-        # 판타지만 썸네일 추가
+        # ✅ 판타지 카테고리만 리스트 썸네일 파싱 (19금 여부는 상세쪽에서 추가 설계 가능)
         thumbnail_url = "-"
         if category_key == "fantasy":
             cover_div = item.select_one("div.fig-1wid0z5")
@@ -97,20 +108,21 @@ def parse_list(list_url: str, category_key: str):
 
         results.append({
             "카테고리": category_key,          # romance / rofan / fantasy / bl
-            "rank": rank_value,               # "1위", "2위", "프로모션"...
-            "is_promotion": is_promotion,     # True/False (원하면 시트에서 무시)
+            "rank": rank_value,               # "1위", "2위", "프로모션" ...
+            "is_promotion": is_promotion,     # True/False
             "title": title,
             "author": author,
             "genre": genre,
             "출판사": publisher,
-            "totalEpisodes": total_episodes,  # 네 카카오 형식에 맞춰서 이름 통일
+            "totalEpisodes": total_episodes,
             "rating": rating,
             "ridi_rating_count": ridi_rating_count,
-            "thumbnail": thumbnail_url,       # 판타지만 값 있고 나머진 "-"
+            "thumbnail": thumbnail_url,
             "url": work_url,
         })
 
     return results
+
 
 def run_ridi():
     all_results = []
