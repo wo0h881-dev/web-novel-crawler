@@ -102,19 +102,28 @@ def parse_list(list_url: str, category_key: str):
 
         # ✅ 판타지 카테고리만 리스트 썸네일 파싱 (19금 여부는 상세쪽에서 추가 설계 가능)
                # ✅ 썸네일: 리스트 카드 안의 img 태그에서 직접 src 사용
+              # ✅ 썸네일: 카드 내부에서 "표지 img"만 골라 src 사용
         thumbnail_url = "-"
-        # 클래스는 페이지마다 조금 바뀔 수 있어서, 우선 카드 내부 img 하나를 잡는 방식
+
+        # 1순위: 표지 클래스가 붙은 img
         img_tag = item.select_one("img.fig-7uq04e.e99ij5y0")
+
+        # 혹시 구조가 바뀌어서 위가 없을 때만, fallback으로 "alt(제목) 있는 img" 중 첫 번째 사용
         if not img_tag:
-            # 혹시 클래스가 바뀐 경우를 대비한 fallback
-            img_tag = item.select_one("img")
+            all_imgs = item.select("img")
+            for im in all_imgs:
+                alt = (im.get("alt") or "").strip()
+                if alt and title in alt:
+                    img_tag = im
+                    break
+
         if img_tag:
-            src = img_tag.get("src", "").strip()
+            src = (img_tag.get("src") or "").strip()
             if src:
-                # 프로토콜이 없으면 보정
                 if src.startswith("//"):
                     src = "https:" + src
                 thumbnail_url = src
+
 
 
         results.append({
