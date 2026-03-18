@@ -66,23 +66,24 @@ def parse_list(list_url: str, category_key: str):
         total_ep_tag = item.select_one("span.fig-w746bu span")
         total_episodes = total_ep_tag.get_text(strip=True) if total_ep_tag else "-"
 
-                # 평점 / 평가수
+                     # 평점 / 평가수
         rating = "-"
         ridi_rating_count = "-"
 
-        # 평점 숫자
+        # 평점 숫자 (별 아이콘 옆 5.0)
         rating_block = item.select_one("span.fig-mhc4m4.enp6wb0")
         if rating_block:
             texts = [t for t in rating_block.stripped_strings]
             if texts:
-                rating = texts[0]
+                rating = texts[0]  # "5.0"
 
-        # 평가수 "(9,323)" 부분
+        # 평가수 "(9,330)" 부분
         rating_count_span = item.select_one("span.fig-1d0qko5.enp6wb2")
         if rating_count_span:
-            raw_count = "".join(rating_count_span.stripped_strings)  # "(9,323)"
+            raw_count = "".join(rating_count_span.stripped_strings)  # "(9,330)"
             raw_count = raw_count.strip("()")
             ridi_rating_count = raw_count if raw_count else "-"
+
 
 
         # ✅ 프로모션(★) vs 숫자 랭크 구분
@@ -102,28 +103,17 @@ def parse_list(list_url: str, category_key: str):
 
         # ✅ 판타지 카테고리만 리스트 썸네일 파싱 (19금 여부는 상세쪽에서 추가 설계 가능)
                # ✅ 썸네일: 리스트 카드 안의 img 태그에서 직접 src 사용
-              # ✅ 썸네일: 카드 내부에서 "표지 img"만 골라 src 사용
+                     # ✅ 썸네일: 카드 안의 표지 <a> 안 첫 번째 img 사용
         thumbnail_url = "-"
-
-        # 1순위: 표지 클래스가 붙은 img
-        img_tag = item.select_one("img.fig-7uq04e.e99ij5y0")
-
-        # 혹시 구조가 바뀌어서 위가 없을 때만, fallback으로 "alt(제목) 있는 img" 중 첫 번째 사용
-        if not img_tag:
-            all_imgs = item.select("img")
-            for im in all_imgs:
-                alt = (im.get("alt") or "").strip()
-                if alt and title in alt:
-                    img_tag = im
-                    break
-
-        if img_tag:
-            src = (img_tag.get("src") or "").strip()
-            if src:
-                if src.startswith("//"):
-                    src = "https:" + src
-                thumbnail_url = src
-
+        cover_anchor = item.select_one("a.fig-1q776eq.e1ftn9sh1")
+        if cover_anchor:
+            img_tag = cover_anchor.select_one("img")
+            if img_tag:
+                src = (img_tag.get("src") or "").strip()
+                if src:
+                    if src.startswith("//"):
+                        src = "https:" + src
+                    thumbnail_url = src
 
 
         results.append({
