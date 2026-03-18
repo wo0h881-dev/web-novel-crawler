@@ -1,5 +1,6 @@
 # ridi.py
 import requests
+import re
 from bs4 import BeautifulSoup
 
 BASE_URL = "https://ridibooks.com"
@@ -117,17 +118,13 @@ def parse_list(list_url: str, category_key: str):
                     is_promotion = True
                     rank_value = "프로모션"
 
-        # ── 썸네일: /cover/ CDN만 필터 ──
+        # ── 썸네일: 카드 HTML에서 /cover/ URL을 정규식으로 직접 추출 ──
         thumbnail_url = "-"
-        for im in item.select("img"):
-            src = (im.get("src") or "").strip()
-            if not src:
-                continue
-            if "/cover/" in src:
-                if src.startswith("//"):
-                    src = "https:" + src
-                thumbnail_url = src
-                break
+        html = item.decode_contents()  # 카드 내부 HTML 문자열
+
+        m = re.search(r"https://img\.ridicdn\.net/cover/[^\s\"']+", html)
+        if m:
+            thumbnail_url = m.group(0)
 
         results.append({
             "카테고리": category_key,          # romance / rofan / fantasy / bl
