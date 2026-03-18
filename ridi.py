@@ -50,70 +50,84 @@ def parse_list(list_url: str, category_key: str):
         if work_url and work_url.startswith("/"):
             work_url = BASE_URL + work_url
 
+        # 작가 / 출판사
         author_tag = item.select_one("a.fig-103urjl.e1s6unbg0")
         publisher_tag = item.select_one("a.fig-103urjl.efs2tg41")
-        genre_tag = item.select_one("span.fig-gcx8hj.e1g90d6s0")
 
         author = author_tag.get_text(strip=True) if author_tag else "-"
         publisher = publisher_tag.get_text(strip=True) if publisher_tag else "-"
-        genre = genre_tag.get_text(strip=True) if genre_tag else "-"
 
-        # ✅ BL 베스트 페이지에서 온 작품은 상단 카테고리를 BL로 고정
-        # (리스트 장르가 현대물/역사/판타지물 등으로 찍혀도 최종 장르는 BL)
-        if category_key == "bl":
-            genre = "BL"
+        # ── 장르: 세부장르 + 카테고리 조합 ──
+        genre_tag = item.select_one("span.fig-gcx8hj.e1g90d6s0")
+        sub_genre = genre_tag.get_text(strip=True) if genre_tag else "-"
 
+        if category_key == "romance":
+            # 로맨스: "로맨스 · 현대물"
+            main_genre = "로맨스"
+            genre = f"{main_genre} · {sub_genre}" if sub_genre != "-" else main_genre
+
+        elif category_key == "rofan":
+            # 로판: "서양풍 로판" / "동양풍 로판" 그대로
+            genre = sub_genre if sub_genre != "-" else "로맨스판타지"
+
+        elif category_key == "fantasy":
+            # 판타지: "현대 판타지" / "퓨전 판타지" 그대로
+            genre = sub_genre if sub_genre != "-" else "판타지"
+
+        elif category_key == "bl":
+            # BL: "BL · 현대물" / "BL · 판타지물"
+            main_genre = "BL"
+            genre = f"{main_genre} · {sub_genre}" if sub_genre != "-" else main_genre
+
+        else:
+            genre = sub_genre or "웹소설"
+
+        # 총 회차
         total_ep_tag = item.select_one("span.fig-w746bu span")
         total_episodes = total_ep_tag.get_text(strip=True) if total_ep_tag else "-"
 
-                     # 평점 / 평가수
+        # ── 평점 / 평가수 ──
         rating = "-"
         ridi_rating_count = "-"
 
-        # 평점 숫자 (별 아이콘 옆 5.0)
+        # 평점 숫자 (별 옆 5.0)
         rating_block = item.select_one("span.fig-mhc4m4.enp6wb0")
         if rating_block:
             texts = [t for t in rating_block.stripped_strings]
             if texts:
-                rating = texts[0]  # "5.0"
+                rating = texts[0]
 
-        # 평가수 "(9,330)" 부분
+        # 평가수 "(9,330)"
         rating_count_span = item.select_one("span.fig-1d0qko5.enp6wb2")
         if rating_count_span:
             raw_count = "".join(rating_count_span.stripped_strings)  # "(9,330)"
             raw_count = raw_count.strip("()")
             ridi_rating_count = raw_count if raw_count else "-"
 
-
-
-        # ✅ 프로모션(★) vs 숫자 랭크 구분
+        # ── 순위 / 프로모션 ──
         badge = item.select_one("div.fig-ty289v")
         is_promotion = False
         rank_value = "-"
         if badge:
             badge_text = badge.get_text(strip=True)
             if badge_text.isdigit():
-                # "1" -> "1위"
                 rank_value = f"{int(badge_text)}위"
             else:
-                # SVG 아이콘이 있으면 프로모션 슬롯(★)
                 if badge.select_one("svg"):
                     is_promotion = True
                     rank_value = "프로모션"
 
-        # ✅ 판타지 카테고리만 리스트 썸네일 파싱 (19금 여부는 상세쪽에서 추가 설계 가능)
-                             # ✅ 썸네일: 표지 img 클래스만 정확히 집어서 src 사용
+        # ── 썸네일: /cover/ CDN만 필터 ──
         thumbnail_url = "-"
-        # 카드 전체에서 표지 클래스가 붙은 img만 선택
-        cover_img = item.select_one("img.fig-7uq04e.e99ij5y0")
-        if cover_img:
-            src = (cover_img.get("src") or "").strip()
-            if src:
+        for im in item.select("img"):
+            src = (im.get("src") or "").strip()
+            if not src:
+                continue
+            if "/cover/" in src:
                 if src.startswith("//"):
                     src = "https:" + src
                 thumbnail_url = src
-
-
+                break
 
         results.append({
             "카테고리": category_key,          # romance / rofan / fantasy / bl
