@@ -1,6 +1,6 @@
 # ridi.py
-import requests
 import re
+import requests
 from bs4 import BeautifulSoup
 
 BASE_URL = "https://ridibooks.com"
@@ -30,26 +30,32 @@ def fetch_html(url: str) -> BeautifulSoup:
 def parse_list(list_url: str, category_key: str):
     soup = fetch_html(list_url)
 
-    # 작품 카드 리스트 확보
-    cards = []
-    for a in soup.select("a.fig-w1hthz"):
-        card = a.find_parent("li")
-        if not card:
-            card = a.find_parent("div")
-        if card and card not in cards:
-            cards.append(card)
-
+    # 각 작품 카드는 li.fig-1m9tqaj
+    cards = soup.select("li.fig-1m9tqaj")
     results = []
 
     for item in cards:
+        # 제목 링크
         title_tag = item.select_one("a.fig-w1hthz")
         if not title_tag:
             continue
 
         title = title_tag.get_text(strip=True)
-        work_url = title_tag.get("href", "")
-        if work_url and work_url.startswith("/"):
-            work_url = BASE_URL + work_url
+
+        # 작품 URL + 작품 ID 추출
+        work_path = title_tag.get("href", "")  # "/books/6188000001?_rdt..."
+        work_url = ""
+        work_id = ""
+
+        if work_path:
+            if work_path.startswith("/"):
+                work_url = BASE_URL + work_path
+            else:
+                work_url = work_path
+
+            m_id = re.search(r"/books/(\d+)", work_path)
+            if m_id:
+                work_id = m_id.group(1)
 
         # 작가 / 출판사
         author_tag = item.select_one("a.fig-103urjl.e1s6unbg0")
@@ -58,7 +64,7 @@ def parse_list(list_url: str, category_key: str):
         author = author_tag.get_text(strip=True) if author_tag else "-"
         publisher = publisher_tag.get_text(strip=True) if publisher_tag else "-"
 
-        # ── 장르: 세부장르 + 카테고리 조합 ──
+        # ── 장르 ──
         genre_tag = item.select_one("span.fig-gcx8hj.e1g90d6s0")
         sub_genre = genre_tag.get_text(strip=True) if genre_tag else "-"
 
@@ -66,20 +72,16 @@ def parse_list(list_url: str, category_key: str):
             # 로맨스: "로맨스 · 현대물"
             main_genre = "로맨스"
             genre = f"{main_genre} · {sub_genre}" if sub_genre != "-" else main_genre
-
         elif category_key == "rofan":
-            # 로판: "서양풍 로판" / "동양풍 로판" 그대로
+            # 로판: 서양풍 로판 / 동양풍 로판 그대로
             genre = sub_genre if sub_genre != "-" else "로맨스판타지"
-
         elif category_key == "fantasy":
-            # 판타지: "현대 판타지" / "퓨전 판타지" 그대로
+            # 판타지: 현대 판타지 / 퓨전 판타지 그대로
             genre = sub_genre if sub_genre != "-" else "판타지"
-
         elif category_key == "bl":
             # BL: "BL · 현대물" / "BL · 판타지물"
             main_genre = "BL"
             genre = f"{main_genre} · {sub_genre}" if sub_genre != "-" else main_genre
-
         else:
             genre = sub_genre or "웹소설"
 
@@ -91,17 +93,15 @@ def parse_list(list_url: str, category_key: str):
         rating = "-"
         ridi_rating_count = "-"
 
-        # 평점 숫자 (별 옆 5.0)
         rating_block = item.select_one("span.fig-mhc4m4.enp6wb0")
         if rating_block:
             texts = [t for t in rating_block.stripped_strings]
             if texts:
                 rating = texts[0]
 
-        # 평가수 "(9,330)"
         rating_count_span = item.select_one("span.fig-1d0qko5.enp6wb2")
         if rating_count_span:
-            raw_count = "".join(rating_count_span.stripped_strings)  # "(9,330)"
+            raw_count = "".join(rating_count_span.stripped_strings)
             raw_count = raw_count.strip("()")
             ridi_rating_count = raw_count if raw_count else "-"
 
@@ -118,18 +118,16 @@ def parse_list(list_url: str, category_key: str):
                     is_promotion = True
                     rank_value = "프로모션"
 
-        # ── 썸네일: 카드 HTML에서 /cover/ URL을 정규식으로 직접 추출 ──
-        thumbnail_url = "-"
-        html = item.decode_contents()  # 카드 내부 HTML 문자열
-
-        m = re.search(r"https://img\.ridicdn\.net/cover/[^\s\"']+", html)
-        if m:
-            thumbnail_url = m.group(0)
+        # ── 썸네일: 작품 ID로 직접 생성 ──
+        if work_id:
+            thumbnail_url = f"https://img.ridicdn.net/cover/{work_id}/large#1"
+        else:
+            thumbnail_url = "-"
 
         results.append({
-            "카테고리": category_key,          # romance / rofan / fantasy / bl
-            "rank": rank_value,               # "1위", "2위", "프로모션" ...
-            "is_promotion": is_promotion,     # True/False
+            "카테고리": category_key,
+            "rank": rank_value,
+            "is_promotion": is_promotion,
             "title": title,
             "author": author,
             "genre": genre,
@@ -153,3 +151,9 @@ def run_ridi():
         except Exception as e:
             print(f"❌ 리디 {key} 에러: {e}")
     return all_results
+
+
+if __name__ == "__main__":
+    items = run_ridi()
+    for x in items[:5]:
+        print(x["title"], "=>", x["thumbnail"])
