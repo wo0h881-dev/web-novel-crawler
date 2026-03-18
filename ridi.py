@@ -66,15 +66,24 @@ def parse_list(list_url: str, category_key: str):
         total_ep_tag = item.select_one("span.fig-w746bu span")
         total_episodes = total_ep_tag.get_text(strip=True) if total_ep_tag else "-"
 
-        rating_block = item.select_one("span.fig-mhc4m4.enp6wb0")
+                # 평점 / 평가수
         rating = "-"
         ridi_rating_count = "-"
+
+        # 평점 숫자
+        rating_block = item.select_one("span.fig-mhc4m4.enp6wb0")
         if rating_block:
             texts = [t for t in rating_block.stripped_strings]
             if texts:
-                rating = texts[0]  # "5.0"
-            if len(texts) > 1:
-                ridi_rating_count = texts[1].strip("()")  # "1,250"
+                rating = texts[0]
+
+        # 평가수 "(9,323)" 부분
+        rating_count_span = item.select_one("span.fig-1d0qko5.enp6wb2")
+        if rating_count_span:
+            raw_count = "".join(rating_count_span.stripped_strings)  # "(9,323)"
+            raw_count = raw_count.strip("()")
+            ridi_rating_count = raw_count if raw_count else "-"
+
 
         # ✅ 프로모션(★) vs 숫자 랭크 구분
         badge = item.select_one("div.fig-ty289v")
@@ -92,19 +101,21 @@ def parse_list(list_url: str, category_key: str):
                     rank_value = "프로모션"
 
         # ✅ 판타지 카테고리만 리스트 썸네일 파싱 (19금 여부는 상세쪽에서 추가 설계 가능)
+               # ✅ 썸네일: 리스트 카드 안의 img 태그에서 직접 src 사용
         thumbnail_url = "-"
-        if category_key == "fantasy":
-            cover_div = item.select_one("div.fig-1wid0z5")
-            if cover_div:
-                style = cover_div.get("style", "")
-                if "background-image" in style and "url(" in style:
-                    start = style.find("url(") + 4
-                    end = style.find(")", start)
-                    if end > start:
-                        thumb = style[start:end].strip('\'"')
-                        if thumb.startswith("//"):
-                            thumb = "https:" + thumb
-                        thumbnail_url = thumb
+        # 클래스는 페이지마다 조금 바뀔 수 있어서, 우선 카드 내부 img 하나를 잡는 방식
+        img_tag = item.select_one("img.fig-7uq04e.e99ij5y0")
+        if not img_tag:
+            # 혹시 클래스가 바뀐 경우를 대비한 fallback
+            img_tag = item.select_one("img")
+        if img_tag:
+            src = img_tag.get("src", "").strip()
+            if src:
+                # 프로토콜이 없으면 보정
+                if src.startswith("//"):
+                    src = "https:" + src
+                thumbnail_url = src
+
 
         results.append({
             "카테고리": category_key,          # romance / rofan / fantasy / bl
