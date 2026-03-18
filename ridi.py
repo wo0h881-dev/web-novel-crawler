@@ -102,17 +102,17 @@ def parse_list(list_url: str, category_key: str):
                     rank_value = "프로모션"
 
         # ✅ 판타지 카테고리만 리스트 썸네일 파싱 (19금 여부는 상세쪽에서 추가 설계 가능)
-                      # ✅ 썸네일: 표지 링크(a.fig-1q776eq.e1ftn9sh1) 안의 "첫 번째 img"만 사용
+                             # ✅ 썸네일: 표지 img 클래스만 정확히 집어서 src 사용
         thumbnail_url = "-"
-        cover_anchor = item.select_one("a.fig-1q776eq.e1ftn9sh1")
-        if cover_anchor:
-            img_tag = cover_anchor.find("img")  # 가장 첫 번째 img만
-            if img_tag:
-                src = (img_tag.get("src") or "").strip()
-                if src:
-                    if src.startswith("//"):
-                        src = "https:" + src
-                    thumbnail_url = src
+        # 카드 전체에서 표지 클래스가 붙은 img만 선택
+        cover_img = item.select_one("img.fig-7uq04e.e99ij5y0")
+        if cover_img:
+            src = (cover_img.get("src") or "").strip()
+            if src:
+                if src.startswith("//"):
+                    src = "https:" + src
+                thumbnail_url = src
+
 
 
         results.append({
