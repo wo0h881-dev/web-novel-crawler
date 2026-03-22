@@ -1,5 +1,3 @@
-# main.py
-
 from naver import run_naver
 from ridi import run_ridi
 
@@ -15,10 +13,8 @@ from bs4 import BeautifulSoup
 def extract_time_free_type(d_page):
     """
     3다무 / 기다무 / 없음 구분
-    - 실제 alt 텍스트/DOM 구조에 맞춰 selector는 한 번 조정하면 됨.
     """
     try:
-        # 예시: alt에 '기다무', '기다리면 무료', '3다무', '3시간' 등이 들어간다고 가정
         badge_img = d_page.query_selector(
             'img[alt*="다무"], img[alt*="기다"], img[alt*="무료"]'
         )
@@ -34,33 +30,82 @@ def extract_time_free_type(d_page):
         return "none"
 
 
-def extract_simple_notices(d_page):
+def extract_kakao_promotion_from_notice_tab(d_page):
     """
-    상세 홈 화면에서 바로 보이는 공지/소개 텍스트를
-    notices[0].body 에 한 덩어리로 저장하는 간단 버전.
-    나중에 '소식' 탭까지 확장 가능.
+    카카오 '소식' 탭에서:
+      - 상단 이벤트 배너 (외전까지 달려야 완결)
+      - 공지 카드들의 [라벨/제목/날짜]만 추출해서 반환.
     """
+    promotion = {
+        "eventBanner": None,
+        "notices": [],
+    }
+
     try:
+        # 1) 소식 탭으로 이동
+        try:
+            notice_tab = d_page.locator(
+                "span.font-small1",
+                has_text="소식",
+            ).first
+            if notice_tab.count() > 0:
+                notice_tab.click()
+                d_page.wait_for_timeout(1000)
+        except Exception as e:
+            print("NOTICE_TAB_ERR:", e)
+
         html = d_page.content()
         soup = BeautifulSoup(html, "html.parser")
 
-        # 설명/공지에 자주 쓰이는 영역 selector (필요하면 수정)
-        blocks = soup.select("div.flex.flex-col.space-y-8pxr span.font-medium2")
-        texts = [b.get_text(strip=True) for b in blocks if b.get_text(strip=True)]
+        # 2) 상단 이벤트 배너 (관련이벤트)
+        banner = soup.select_one('div[data-t-obj*="관련이벤트"]')
+        if banner:
+            title_el = banner.select_one(".font-medium2-bold")
+            subtitle_el = banner.select_one(".font-small2")
+            title = title_el.get_text(strip=True) if title_el else ""
+            subtitle = subtitle_el.get_text(strip=True) if subtitle_el else ""
+            if title:
+                promotion["eventBanner"] = {
+                    "title": title,
+                    "subtitle": subtitle,
+                }
 
-        if not texts:
-            return []
+        # 3) 공지 카드들: 안내 / 제목 / 날짜
+        notice_blocks = soup.select(
+            "div.flex.w-full.flex-col.items-center.rounded-12pxr.bg-bg-a-20"
+        )
 
-        body = "\n".join(texts)
-        return [
-            {
-                "title": "notice",
-                "body": body,
-                "date": None,
-            }
-        ]
-    except Exception:
-        return []
+        for block in notice_blocks:
+            header = block.select_one("div.flex.flex-col.space-y-8pxr.pt-18pxr")
+            if not header:
+                continue
+
+            label_el = header.select_one("span.font-x-small2-bold")
+            title_el = header.select_one("div.font-small1-bold")
+            date_el = header.select_one("span.font-small2")
+
+            label = label_el.get_text(strip=True) if label_el else ""
+            title = title_el.get_text(strip=True) if title_el else ""
+            date = date_el.get_text(strip=True) if date_el else ""
+
+            if not title or not date:
+                continue
+
+            promotion["notices"].append(
+                {
+                    "label": label or "안내",
+                    "title": title,
+                    "date": date,
+                }
+            )
+
+    except Exception as e:
+        print("PROMOTION_PARSE_ERR:", e)
+
+    # 아무 것도 없으면 None 리턴해서 JSON에 안 넣게
+    if not promotion["eventBanner"] and not promotion["notices"]:
+        return None
+    return promotion
 
 
 def save_kakao_promotions(results, date_str):
@@ -182,7 +227,7 @@ def run_kakao_realtime_rank():
                     except Exception as e:
                         print("INFO_TAB_ERR:", e)
 
-                    # 6) 출판사: "발행자" 라벨 줄의 두 번째 span
+                    # 6) 출판사
                     publisher = "-"
                     try:
                         publisher_row = d_page.locator(
@@ -209,7 +254,7 @@ def run_kakao_realtime_rank():
                     if rating_el.count() > 0:
                         rating = rating_el.inner_text().strip()
 
-                    # 8) 다시 홈 탭으로 이동 (회차수/댓글수 홈 기준)
+                    # 8) 다시 홈 탭으로 이동
                     try:
                         home_tab = d_page.locator(
                             "span.font-small1",
@@ -235,7 +280,7 @@ def run_kakao_realtime_rank():
                                 "span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70"
                             ).first
                             if ep_text_el.count() > 0:
-                                ep_text = ep_text_el.inner_text().strip()  # "전체 146"
+                                ep_text = ep_text_el.inner_text().strip()
                                 m = re.search(r"(\d[\d,]*)", ep_text)
                                 if m:
                                     num = m.group(1).replace(",", "")
@@ -250,41 +295,42 @@ def run_kakao_realtime_rank():
                                 "span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70"
                             ).first
                             if c_text_el.count() > 0:
-                                c_text = c_text_el.inner_text().strip()  # "전체 7,171" / "전체 1.6만"
+                                c_text = c_text_el.inner_text().strip()
                                 m2 = re.search(r"([\d.,]+)", c_text)
                                 if m2:
-                                    core = m2.group(1)  # "7,171" or "1.6"
+                                    core = m2.group(1)
                                     if "만" in c_text:
-                                        comments = core + "만"  # "1.6만"
+                                        comments = core + "만"
                                     else:
-                                        comments = core.replace(",", "")  # "7171"
+                                        comments = core.replace(",", "")
                     except Exception as e:
                         print("EP/COMMENT_ERR:", e)
 
                     # 10) 프로모션 정보
                     time_free_type = extract_time_free_type(d_page)
-                    notices = extract_simple_notices(d_page)
+                    promotion = extract_kakao_promotion_from_notice_tab(d_page)
 
-                    final_results.append(
-                        {
-                            "rank": f"{i+1}위",
-                            "title": title,
-                            "author": author,
-                            "date": today,
-                            "genre": genre,
-                            "views": views,
-                            "thumbnail": thumbnail,
-                            "출판사": publisher,
-                            "rating": rating,
-                            "totalEpisodes": total_episodes,
-                            "comments": comments,
-                            # 🔽 새로 추가되는 프로모션 필드
-                            "promotion": {
-                                "timeFreeType": time_free_type,  # "none" | "waitFree" | "threeHour"
-                                "notices": notices,  # [{ title, body, date }]
-                            },
+                    final_item = {
+                        "rank": f"{i+1}위",
+                        "title": title,
+                        "author": author,
+                        "date": today,
+                        "genre": genre,
+                        "views": views,
+                        "thumbnail": thumbnail,
+                        "출판사": publisher,
+                        "rating": rating,
+                        "totalEpisodes": total_episodes,
+                        "comments": comments,
+                    }
+
+                    if time_free_type != "none" or promotion:
+                        final_item["promotion"] = {
+                            "timeFreeType": time_free_type,
+                            **(promotion or {"notices": []}),
                         }
-                    )
+
+                    final_results.append(final_item)
                     print(f"✅ {i+1}위 완료: {title}")
 
                 except Exception as e:
@@ -293,7 +339,7 @@ def run_kakao_realtime_rank():
                     if d_page:
                         d_page.close()
 
-            # 시트로 전송 (기존 로직 그대로)
+            # 시트로 전송
             send_to_unified_sheet(final_results, source="kakao")
 
             # Cloudflare용 프로모션 JSON 저장
