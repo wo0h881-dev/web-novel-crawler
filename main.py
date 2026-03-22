@@ -33,11 +33,11 @@ def extract_time_free_type(d_page):
 def extract_kakao_promotion_from_notice_tab(d_page):
     """
     카카오 '소식' 탭에서:
-      - 상단 이벤트 배너 (외전까지 달려야 완결)
-      - 공지 카드들의 [라벨/제목/날짜]만 추출해서 반환.
+      - 상단 이벤트 배너들 (eventBanners 배열)
+      - 공지 카드들의 [라벨/제목/날짜]만 추출
     """
     promotion = {
-        "eventBanner": None,
+        "eventBanners": [],  # 🔹 여러 배너
         "notices": [],
     }
 
@@ -57,18 +57,23 @@ def extract_kakao_promotion_from_notice_tab(d_page):
         html = d_page.content()
         soup = BeautifulSoup(html, "html.parser")
 
-        # 2) 상단 이벤트 배너 (관련이벤트)
-        banner = soup.select_one('div[data-t-obj*="관련이벤트"]')
-        if banner:
-            title_el = banner.select_one(".font-medium2-bold")
-            subtitle_el = banner.select_one(".font-small2")
-            title = title_el.get_text(strip=True) if title_el else ""
-            subtitle = subtitle_el.get_text(strip=True) if subtitle_el else ""
-            if title:
-                promotion["eventBanner"] = {
-                    "title": title,
-                    "subtitle": subtitle,
-                }
+        # 2) 상단 이벤트 배너들 (관련이벤트 컨테이너 안의 모든 배너)
+        banner_container = soup.select_one('div[data-t-obj*="관련이벤트"]')
+        if banner_container:
+            event_banners = []
+            for banner_div in banner_container.select("div.relative.flex.h-64pxr"):
+                t = banner_div.select_one(".font-medium2-bold")
+                s = banner_div.select_one(".font-small2")
+                if not t:
+                    continue
+                event_banners.append(
+                    {
+                        "title": t.get_text(strip=True),
+                        "subtitle": s.get_text(strip=True) if s else "",
+                    }
+                )
+            if event_banners:
+                promotion["eventBanners"] = event_banners
 
         # 3) 공지 카드들: 안내 / 제목 / 날짜
         notice_blocks = soup.select(
@@ -102,10 +107,10 @@ def extract_kakao_promotion_from_notice_tab(d_page):
     except Exception as e:
         print("PROMOTION_PARSE_ERR:", e)
 
-    # 아무 것도 없으면 None 리턴해서 JSON에 안 넣게
-    if not promotion["eventBanner"] and not promotion["notices"]:
+    if not promotion["eventBanners"] and not promotion["notices"]:
         return None
     return promotion
+
 
 
 def save_kakao_promotions(results, date_str):
