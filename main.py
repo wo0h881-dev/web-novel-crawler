@@ -9,6 +9,88 @@ import re
 import requests
 import datetime
 from playwright.sync_api import sync_playwright
+from bs4 import BeautifulSoup
+
+
+def extract_time_free_type(d_page):
+    """
+    3다무 / 기다무 / 없음 구분
+    - 실제 alt 텍스트/DOM 구조에 맞춰 selector는 한 번 조정하면 됨.
+    """
+    try:
+        # 예시: alt에 '기다무', '기다리면 무료', '3다무', '3시간' 등이 들어간다고 가정
+        badge_img = d_page.query_selector(
+            'img[alt*="다무"], img[alt*="기다"], img[alt*="무료"]'
+        )
+        if not badge_img:
+            return "none"
+        alt = badge_img.get_attribute("alt") or ""
+        if "3다무" in alt or "3시간" in alt:
+            return "threeHour"
+        if "기다무" in alt or "기다리면 무료" in alt:
+            return "waitFree"
+        return "none"
+    except Exception:
+        return "none"
+
+
+def extract_simple_notices(d_page):
+    """
+    상세 홈 화면에서 바로 보이는 공지/소개 텍스트를
+    notices[0].body 에 한 덩어리로 저장하는 간단 버전.
+    나중에 '소식' 탭까지 확장 가능.
+    """
+    try:
+        html = d_page.content()
+        soup = BeautifulSoup(html, "html.parser")
+
+        # 설명/공지에 자주 쓰이는 영역 selector (필요하면 수정)
+        blocks = soup.select("div.flex.flex-col.space-y-8pxr span.font-medium2")
+        texts = [b.get_text(strip=True) for b in blocks if b.get_text(strip=True)]
+
+        if not texts:
+            return []
+
+        body = "\n".join(texts)
+        return [
+            {
+                "title": "notice",
+                "body": body,
+                "date": None,
+            }
+        ]
+    except Exception:
+        return []
+
+
+def save_kakao_promotions(results, date_str):
+    """
+    Cloudflare용 카카오 프로모션 JSON 파일 저장.
+    - out/kakao-promotions-YYYY-MM-DD.json 형태로 저장
+    """
+    items = []
+    for item in results:
+        promo = item.get("promotion") or {}
+        if not promo:
+            continue
+        items.append(
+            {
+                "title": item.get("title", ""),
+                "promotion": promo,
+            }
+        )
+
+    payload = {
+        "date": date_str,
+        "platform": "kakao",
+        "items": items,
+    }
+
+    os.makedirs("out", exist_ok=True)
+    path = os.path.join("out", f"kakao-promotions-{date_str}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    print("💾 프로모션 JSON 저장:", path)
 
 
 def run_kakao_realtime_rank():
@@ -34,7 +116,7 @@ def run_kakao_realtime_rank():
             # 작품 링크 수집
             links = page.eval_on_selector_all(
                 'a[href*="/content/"]',
-                'elements => elements.map(e => e.href)'
+                "elements => elements.map(e => e.href)",
             )
             unique_links = []
             for link in links:
@@ -56,18 +138,26 @@ def run_kakao_realtime_rank():
                     d_page.wait_for_timeout(1000)
 
                     # 1) 타이틀 / 썸네일
-                    title = d_page.locator('meta[property="og:title"]').get_attribute("content")
-                    thumbnail = d_page.locator('meta[property="og:image"]').get_attribute("content")
+                    title = d_page.locator(
+                        'meta[property="og:title"]'
+                    ).get_attribute("content")
+                    thumbnail = d_page.locator(
+                        'meta[property="og:image"]'
+                    ).get_attribute("content")
 
                     # 2) 작가
                     author = "-"
-                    author_el = d_page.locator('span.text-el-70.opacity-70').first
+                    author_el = d_page.locator(
+                        "span.text-el-70.opacity-70"
+                    ).first
                     if author_el.count() > 0:
                         author = author_el.inner_text().strip()
 
                     # 3) 장르
                     genre = "-"
-                    genre_elements = d_page.locator('span.break-all.align-middle').all_inner_texts()
+                    genre_elements = d_page.locator(
+                        "span.break-all.align-middle"
+                    ).all_inner_texts()
                     if len(genre_elements) > 1:
                         genre = [g for g in genre_elements if g != "웹소설"][0]
                     elif len(genre_elements) == 1:
@@ -75,14 +165,14 @@ def run_kakao_realtime_rank():
 
                     # 4) 조회수 (본문 텍스트에서 첫 번째 '만/억' 패턴)
                     body_text = d_page.evaluate("() => document.body.innerText")
-                    view_match = re.search(r'(\d+\.?\d*[만억])', body_text)
+                    view_match = re.search(r"(\d+\.?\d*[만억])", body_text)
                     views = view_match.group(1) if view_match else "-"
 
                     # 5) 정보 탭으로 이동 (발행자용)
                     try:
                         info_tab = d_page.locator(
-                            'span.font-small1',
-                            has_text="정보"
+                            "span.font-small1",
+                            has_text="정보",
                         ).first
                         info_count = info_tab.count()
                         print("INFO_TAB_COUNT:", info_count)
@@ -95,9 +185,9 @@ def run_kakao_realtime_rank():
                     # 6) 출판사: "발행자" 라벨 줄의 두 번째 span
                     publisher = "-"
                     try:
-                        publisher_row = d_page.locator('div.font-small1').filter(
-                            has_text="발행자"
-                        ).first
+                        publisher_row = d_page.locator(
+                            "div.font-small1"
+                        ).filter(has_text="발행자").first
                         row_count = publisher_row.count()
                         print("PUB_ROW_COUNT:", row_count)
                         if row_count > 0:
@@ -122,8 +212,8 @@ def run_kakao_realtime_rank():
                     # 8) 다시 홈 탭으로 이동 (회차수/댓글수 홈 기준)
                     try:
                         home_tab = d_page.locator(
-                            'span.font-small1',
-                            has_text="홈"
+                            "span.font-small1",
+                            has_text="홈",
                         ).first
                         if home_tab.count() > 0:
                             home_tab.click()
@@ -138,11 +228,11 @@ def run_kakao_realtime_rank():
                     try:
                         # 회차수 컨테이너 (첫 번째)
                         episode_container = d_page.locator(
-                            'div.flex.h-full.flex-1.items-center.space-x-8pxr'
+                            "div.flex.h-full.flex-1.items-center.space-x-8pxr"
                         ).first
                         if episode_container.count() > 0:
                             ep_text_el = episode_container.locator(
-                                'span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70'
+                                "span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70"
                             ).first
                             if ep_text_el.count() > 0:
                                 ep_text = ep_text_el.inner_text().strip()  # "전체 146"
@@ -153,37 +243,48 @@ def run_kakao_realtime_rank():
 
                         # 댓글 컨테이너 (두 번째)
                         comment_container = d_page.locator(
-                            'div.flex.h-full.flex-1.items-center.space-x-8pxr'
+                            "div.flex.h-full.flex-1.items-center.space-x-8pxr"
                         ).nth(1)
                         if comment_container.count() > 0:
                             c_text_el = comment_container.locator(
-                                'span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70'
+                                "span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70"
                             ).first
                             if c_text_el.count() > 0:
-                                c_text = c_text_el.inner_text().strip()   # "전체 7,171" 또는 "전체 1.6만"
+                                c_text = c_text_el.inner_text().strip()  # "전체 7,171" / "전체 1.6만"
                                 m2 = re.search(r"([\d.,]+)", c_text)
                                 if m2:
-                                    core = m2.group(1)  # "7,171" 또는 "1.6"
+                                    core = m2.group(1)  # "7,171" or "1.6"
                                     if "만" in c_text:
-                                        comments = core + "만"     # "1.6만"
+                                        comments = core + "만"  # "1.6만"
                                     else:
                                         comments = core.replace(",", "")  # "7171"
                     except Exception as e:
                         print("EP/COMMENT_ERR:", e)
 
-                    final_results.append({
-                        "rank": f"{i+1}위",
-                        "title": title,
-                        "author": author,
-                        "date": today,
-                        "genre": genre,
-                        "views": views,
-                        "thumbnail": thumbnail,
-                        "출판사": publisher,
-                        "rating": rating,
-                        "totalEpisodes": total_episodes,
-                        "comments": comments,
-                    })
+                    # 10) 프로모션 정보
+                    time_free_type = extract_time_free_type(d_page)
+                    notices = extract_simple_notices(d_page)
+
+                    final_results.append(
+                        {
+                            "rank": f"{i+1}위",
+                            "title": title,
+                            "author": author,
+                            "date": today,
+                            "genre": genre,
+                            "views": views,
+                            "thumbnail": thumbnail,
+                            "출판사": publisher,
+                            "rating": rating,
+                            "totalEpisodes": total_episodes,
+                            "comments": comments,
+                            # 🔽 새로 추가되는 프로모션 필드
+                            "promotion": {
+                                "timeFreeType": time_free_type,  # "none" | "waitFree" | "threeHour"
+                                "notices": notices,  # [{ title, body, date }]
+                            },
+                        }
+                    )
                     print(f"✅ {i+1}위 완료: {title}")
 
                 except Exception as e:
@@ -192,7 +293,11 @@ def run_kakao_realtime_rank():
                     if d_page:
                         d_page.close()
 
+            # 시트로 전송 (기존 로직 그대로)
             send_to_unified_sheet(final_results, source="kakao")
+
+            # Cloudflare용 프로모션 JSON 저장
+            save_kakao_promotions(final_results, today)
 
         except Exception as e:
             print(f"❌ 카카오 랭킹 에러: {e}")
