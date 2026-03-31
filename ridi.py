@@ -1,5 +1,6 @@
-# ridi.py : 리디북스 카테고리별 웹소설 베스트셀러 + 프로모션(리다무 / N화 무료)
-
+import os
+import json
+import datetime
 import re
 import requests
 from bs4 import BeautifulSoup
@@ -30,15 +31,8 @@ def fetch_html(url: str) -> BeautifulSoup:
 
 
 def parse_ridi_promotion(item) -> Optional[Dict]:
-    """
-    작품 카드(li.fig-1m9tqaj) 하나에서 리디 프로모션 뱃지를 파싱.
-    - timeFreeType: 리다무면 waitFree
-    - freeEpisodes: N화 무료 숫자
-    - ridiWaitFree: 리다무 여부 (리디 전용)
-    - ridiFreeLabel: '3화 무료' 같은 텍스트 (리디 전용)
-    """
     promo = {
-        "timeFreeType": "none",   # 공통 필드
+        "timeFreeType": "none",
         "tag": "",
         "freeEpisodes": None,
         "daysLeft": None,
@@ -73,7 +67,7 @@ def parse_ridi_promotion(item) -> Optional[Dict]:
         m = re.search(r"(\d+)\s*화\s*무료", label)
         if m:
             free_episodes = int(m.group(1))
-            ridi_free_label = m.group(0)  # "3화 무료"
+            ridi_free_label = m.group(0)
 
     if not tag_parts and free_episodes is None and not ridi_waitfree:
         return None
@@ -89,20 +83,17 @@ def parse_ridi_promotion(item) -> Optional[Dict]:
 def parse_list(list_url: str, category_key: str):
     soup = fetch_html(list_url)
 
-    # 각 작품 카드는 li.fig-1m9tqaj
     cards = soup.select("li.fig-1m9tqaj")
     results = []
 
     for item in cards:
-        # 제목 링크
         title_tag = item.select_one("a.fig-w1hthz")
         if not title_tag:
             continue
 
         title = title_tag.get_text(strip=True)
 
-        # 작품 URL + 작품 ID 추출
-        work_path = title_tag.get("href", "")  # "/books/6188000001?_rdt..."
+        work_path = title_tag.get("href", "")
         work_url = ""
         work_id = ""
 
@@ -116,14 +107,12 @@ def parse_list(list_url: str, category_key: str):
             if m_id:
                 work_id = m_id.group(1)
 
-        # 작가 / 출판사
         author_tag = item.select_one("a.fig-103urjl.e1s6unbg0")
         publisher_tag = item.select_one("a.fig-103urjl.efs2tg41")
 
         author = author_tag.get_text(strip=True) if author_tag else "-"
         publisher = publisher_tag.get_text(strip=True) if publisher_tag else "-"
 
-        # ── 장르 ──
         genre_tag = item.select_one("span.fig-gcx8hj.e1g90d6s0")
         sub_genre = genre_tag.get_text(strip=True) if genre_tag else "-"
 
@@ -140,11 +129,9 @@ def parse_list(list_url: str, category_key: str):
         else:
             genre = sub_genre or "웹소설"
 
-        # 총 회차
         total_ep_tag = item.select_one("span.fig-w746bu span")
         total_episodes = total_ep_tag.get_text(strip=True) if total_ep_tag else "-"
 
-        # ── 평점 / 평가수 ──
         rating = "-"
         ridi_rating_count = "-"
 
@@ -160,7 +147,6 @@ def parse_list(list_url: str, category_key: str):
             raw_count = raw_count.strip("()")
             ridi_rating_count = raw_count if raw_count else "-"
 
-        # ── 순위 / 프로모션 뱃지 ──
         badge = item.select_one("div.fig-ty289v")
         is_promotion = False
         rank_value = "-"
@@ -173,13 +159,11 @@ def parse_list(list_url: str, category_key: str):
                     is_promotion = True
                     rank_value = "프로모션"
 
-        # ── 썸네일: 작품 ID로 직접 생성 ──
         if work_id:
             thumbnail_url = f"https://img.ridicdn.net/cover/{work_id}/large#1"
         else:
             thumbnail_url = "-"
 
-        # ── 리디 프로모션(리다무 / n화 무료) ──
         promotion = parse_ridi_promotion(item)
 
         result = {
@@ -215,8 +199,38 @@ def run_ridi():
     return all_results
 
 
+def build_ridi_promotion_payload(raw_items):
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    return {
+        "date": today,
+        "platform": "ridi",
+        "items": [
+            {
+                "title": item["title"],
+                "promotion": item["promotion"],
+            }
+            for item in raw_items
+            if item.get("promotion")
+        ],
+    }
+
+
+def save_ridi_promotions_json(raw_items):
+    payload = build_ridi_promotion_payload(raw_items)
+    os.makedirs("public/data", exist_ok=True)
+    path = os.path.join("public", "data", "ridi-promotions-today.json")
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    print("💾 리디 프로모션 저장 완료:", path)
+
+
 if __name__ == "__main__":
     items = run_ridi()
+
     for x in items[:30]:
         if "promotion" in x:
             print("PROMO:", x["카테고리"], x["title"], "=>", x["promotion"])
+
+    save_ridi_promotions_json(items)
