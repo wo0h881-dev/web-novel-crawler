@@ -200,7 +200,7 @@ def run_ridi():
 
 
 def build_ridi_promotion_payload(raw_items):
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    today = (datetime.datetime.utcnow() + datetime.timedelta(hours=9)).strftime("%Y-%m-%d")
     return {
         "date": today,
         "platform": "ridi",
