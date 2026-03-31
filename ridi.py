@@ -3,6 +3,7 @@
 import re
 import requests
 from bs4 import BeautifulSoup
+from typing import Optional, Dict
 
 BASE_URL = "https://ridibooks.com"
 
@@ -28,7 +29,7 @@ def fetch_html(url: str) -> BeautifulSoup:
     return BeautifulSoup(resp.text, "html.parser")
 
 
-def parse_ridi_promotion(item) -> dict | None:
+def parse_ridi_promotion(item) -> Optional[Dict]:
     """
     작품 카드(li.fig-1m9tqaj) 하나에서 리디 프로모션 뱃지를 파싱.
     - timeFreeType: 리다무면 waitFree
