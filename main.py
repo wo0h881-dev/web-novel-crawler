@@ -1,5 +1,5 @@
-from naver import run_naver
-from ridi import run_ridi
+from naver import run_naver, save_naver_promotions_json, fetch_naver_top20_raw
+from ridi import run_ridi, save_ridi_promotions_json
 
 import os
 import json
@@ -382,6 +382,7 @@ def run_ridi_all():
         print("⚠ 리디 결과 없음")
         return
     send_to_unified_sheet(results, source="ridi")
+    save_ridi_promotions_json(results)
     print("✅ 리디 전송 완료")
 
 
