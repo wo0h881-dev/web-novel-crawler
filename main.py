@@ -114,10 +114,6 @@ def extract_kakao_promotion_from_notice_tab(d_page):
 
 
 def save_kakao_promotions(results, date_str):
-    """
-    Cloudflare용 카카오 프로모션 JSON 파일 저장.
-    - out/kakao-promotions-YYYY-MM-DD.json 형태로 저장
-    """
     items = []
     for item in results:
         promo = item.get("promotion") or {}
@@ -136,11 +132,11 @@ def save_kakao_promotions(results, date_str):
         "items": items,
     }
 
-    os.makedirs("out", exist_ok=True)
-    path = os.path.join("out", f"kakao-promotions-{date_str}.json")
+    os.makedirs("public/data", exist_ok=True)
+    path = os.path.join("public", "data", "kakao-promotions-today.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
-    print("💾 프로모션 JSON 저장:", path)
+    print("💾 카카오 프로모션 저장:", path)
 
 
 def run_kakao_realtime_rank():
