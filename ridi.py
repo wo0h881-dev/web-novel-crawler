@@ -1,4 +1,5 @@
-# ridi.py
+# ridi.py : 리디북스 카테고리별 웹소설 베스트셀러 + 프로모션(리다무 / N화 무료)
+
 import re
 import requests
 from bs4 import BeautifulSoup
@@ -25,6 +26,63 @@ def fetch_html(url: str) -> BeautifulSoup:
     resp = requests.get(url, headers=HEADERS, timeout=10)
     resp.raise_for_status()
     return BeautifulSoup(resp.text, "html.parser")
+
+
+def parse_ridi_promotion(item) -> dict | None:
+    """
+    작품 카드(li.fig-1m9tqaj) 하나에서 리디 프로모션 뱃지를 파싱.
+    - timeFreeType: 리다무면 waitFree
+    - freeEpisodes: N화 무료 숫자
+    - ridiWaitFree: 리다무 여부 (리디 전용)
+    - ridiFreeLabel: '3화 무료' 같은 텍스트 (리디 전용)
+    """
+    promo = {
+        "timeFreeType": "none",   # 공통 필드
+        "tag": "",
+        "freeEpisodes": None,
+        "daysLeft": None,
+        "eventBanners": [],
+        "notices": [],
+        "ridiWaitFree": False,
+        "ridiFreeLabel": None,
+    }
+
+    thumb_link = item.select_one("a.fig-1q776eq, a.fig-1q776eq.e1ftn9sh1, a.fig-w1hthz")
+    if not thumb_link:
+        return None
+
+    badges = thumb_link.select("ul.fig-1i4k0g9 li[aria-label]")
+
+    tag_parts = []
+    free_episodes = None
+    ridi_free_label = None
+    ridi_waitfree = False
+
+    for li in badges:
+        label = li.get("aria-label", "").strip()
+        if not label:
+            continue
+
+        tag_parts.append(label)
+
+        if "리다무" in label:
+            promo["timeFreeType"] = "waitFree"
+            ridi_waitfree = True
+
+        m = re.search(r"(\d+)\s*화\s*무료", label)
+        if m:
+            free_episodes = int(m.group(1))
+            ridi_free_label = m.group(0)  # "3화 무료"
+
+    if not tag_parts and free_episodes is None and not ridi_waitfree:
+        return None
+
+    promo["tag"] = " ".join(tag_parts)
+    promo["freeEpisodes"] = free_episodes
+    promo["ridiWaitFree"] = ridi_waitfree
+    promo["ridiFreeLabel"] = ridi_free_label
+
+    return promo
 
 
 def parse_list(list_url: str, category_key: str):
@@ -69,17 +127,13 @@ def parse_list(list_url: str, category_key: str):
         sub_genre = genre_tag.get_text(strip=True) if genre_tag else "-"
 
         if category_key == "romance":
-            # 로맨스: "로맨스 · 현대물"
             main_genre = "로맨스"
             genre = f"{main_genre} · {sub_genre}" if sub_genre != "-" else main_genre
         elif category_key == "rofan":
-            # 로판: 서양풍 로판 / 동양풍 로판 그대로
             genre = sub_genre if sub_genre != "-" else "로맨스판타지"
         elif category_key == "fantasy":
-            # 판타지: 현대 판타지 / 퓨전 판타지 그대로
             genre = sub_genre if sub_genre != "-" else "판타지"
         elif category_key == "bl":
-            # BL: "BL · 현대물" / "BL · 판타지물"
             main_genre = "BL"
             genre = f"{main_genre} · {sub_genre}" if sub_genre != "-" else main_genre
         else:
@@ -105,7 +159,7 @@ def parse_list(list_url: str, category_key: str):
             raw_count = raw_count.strip("()")
             ridi_rating_count = raw_count if raw_count else "-"
 
-        # ── 순위 / 프로모션 ──
+        # ── 순위 / 프로모션 뱃지 ──
         badge = item.select_one("div.fig-ty289v")
         is_promotion = False
         rank_value = "-"
@@ -124,7 +178,10 @@ def parse_list(list_url: str, category_key: str):
         else:
             thumbnail_url = "-"
 
-        results.append({
+        # ── 리디 프로모션(리다무 / n화 무료) ──
+        promotion = parse_ridi_promotion(item)
+
+        result = {
             "카테고리": category_key,
             "rank": rank_value,
             "is_promotion": is_promotion,
@@ -137,7 +194,11 @@ def parse_list(list_url: str, category_key: str):
             "ridi_rating_count": ridi_rating_count,
             "thumbnail": thumbnail_url,
             "url": work_url,
-        })
+        }
+        if promotion:
+            result["promotion"] = promotion
+
+        results.append(result)
 
     return results
 
@@ -155,5 +216,6 @@ def run_ridi():
 
 if __name__ == "__main__":
     items = run_ridi()
-    for x in items[:5]:
-        print(x["title"], "=>", x["thumbnail"])
+    for x in items[:30]:
+        if "promotion" in x:
+            print("PROMO:", x["카테고리"], x["title"], "=>", x["promotion"])
