@@ -1,5 +1,3 @@
-# naver.py : 네이버 시리즈 웹소설 TOP 20 크롤링 + 프로모션 정보 수집
-
 import os
 import json
 import datetime
@@ -31,21 +29,11 @@ def get_product_no_from_href(href: str) -> str:
     return qs.get("productNo", [""])[0]
 
 
-# ---------------- 프로모션 파싱 ----------------
-
 def parse_promotion_from_list_li(li) -> Optional[Dict]:
-    """
-    TOP100 리스트 <li> 하나에서 프로모션 정보 추출.
-    - timeFreeType: waitFree / threeHour / pass / none
-    - tag: 썸네일 아이콘 텍스트(매일10시무료, 타임딜, 시리즈 에디션 등)
-    - freeEpisodes: '25화 무료'에서 숫자
-    - daysLeft: '85일 남음'에서 숫자
-    """
     thumb_a = li.select_one("a.pic")
     tag_parts = []
     time_free_type = "none"
 
-    # 썸네일 위 아이콘들 (매일10시무료, 타임딜, 시리즈 에디션 등)
     if thumb_a:
         ico_els = thumb_a.select("em")
         for em in ico_els:
@@ -64,7 +52,6 @@ def parse_promotion_from_list_li(li) -> Optional[Dict]:
             elif "타임딜" in text:
                 time_free_type = "threeHour"
 
-    # '총130화/미완결|25화 무료  85일 남음' 줄
     meta_el = li.select_one(".comic_cont .info") or li.select_one(".info")
     meta_text = meta_el.get_text(" ", strip=True) if meta_el else ""
 
@@ -80,7 +67,6 @@ def parse_promotion_from_list_li(li) -> Optional[Dict]:
 
     full_text = " ".join(tag_parts) + " " + meta_text
 
-    # 프리패스/에디션 계열
     if time_free_type == "none":
         if "에디션" in full_text or "프리패스" in full_text:
             time_free_type = "pass"
@@ -105,18 +91,11 @@ def parse_promotion_from_list_li(li) -> Optional[Dict]:
     }
 
 
-# ---------------- 상세 페이지 파싱 ----------------
-
 def fetch_detail_info(detail_url: str):
-    """
-    상세 페이지에서 조회수, 작가명, 장르, 썸네일, 출판사, 평점, 댓글 수, 총 회차수를 가져온다.
-    반환: (views, author, genre, thumbnail_url, publisher, rating, comment_count, total_episodes)
-    """
     r = requests.get(detail_url, headers=HEADERS)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
-    # 1) 조회수 (942.4만 같은 값)
     views = "-"
     try:
         dl_btn = soup.select_one("a.btn_download span")
@@ -134,7 +113,6 @@ def fetch_detail_info(detail_url: str):
                 views = text
                 break
 
-    # 2) 작가
     author = "-"
     author_label = soup.find(
         lambda tag: tag.name == "span" and tag.get_text(strip=True) == "글"
@@ -148,7 +126,6 @@ def fetch_detail_info(detail_url: str):
         if writer_tag:
             author = writer_tag.get_text(strip=True)
 
-    # 3) 장르
     genre = "웹소설"
     info_lst = soup.find("li", class_="info_lst")
     if info_lst:
@@ -158,7 +135,6 @@ def fetch_detail_info(detail_url: str):
             if first_genre:
                 genre = first_genre
 
-    # 4) 썸네일
     thumbnail_url = "-"
     img_tag = soup.select_one(
         "div.pic img, div.thumb img, img#product_img, img[src*='comicthumb-phinf']"
@@ -166,7 +142,6 @@ def fetch_detail_info(detail_url: str):
     if img_tag and img_tag.has_attr("src"):
         thumbnail_url = img_tag["src"].strip()
 
-    # 5) 출판사
     publisher = "-"
     pub_label = soup.find(
         lambda tag: tag.name == "span" and tag.get_text(strip=True) == "출판사"
@@ -176,7 +151,6 @@ def fetch_detail_info(detail_url: str):
         if pub_a:
             publisher = pub_a.get_text(strip=True)
 
-    # 6) 평점
     rating = "-"
     score_area = soup.select_one("div.score_area")
     if score_area:
@@ -184,7 +158,6 @@ def fetch_detail_info(detail_url: str):
         if em:
             rating = em.get_text(strip=True)
 
-    # 7) 댓글 수
     comment_count = "-"
     try:
         c_span = soup.select_one("span#commentCount")
@@ -193,7 +166,6 @@ def fetch_detail_info(detail_url: str):
     except Exception:
         pass
 
-    # 8) 총 회차수
     total_episodes = "-"
     try:
         ep_header = soup.select_one("h5.end_total_episode")
@@ -216,8 +188,6 @@ def fetch_detail_info(detail_url: str):
         total_episodes,
     )
 
-
-# ---------------- 랭킹 페이지 ----------------
 
 def fetch_naver_top20_raw():
     r = requests.get(RANKING_URL, headers=HEADERS)
@@ -273,8 +243,6 @@ def fetch_naver_top20_raw():
     return items
 
 
-# ---------------- 시트로 보내는 포맷 ----------------
-
 def build_payload_for_google(raw_items):
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     result = []
@@ -300,6 +268,33 @@ def build_payload_for_google(raw_items):
     return result
 
 
+def build_naver_promotion_payload(raw_items):
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    return {
+        "date": today,
+        "platform": "naver",
+        "items": [
+            {
+                "title": item["title"],
+                "promotion": item["promotion"],
+            }
+            for item in raw_items
+            if item.get("promotion")
+        ],
+    }
+
+
+def save_naver_promotions_json(raw_items):
+    payload = build_naver_promotion_payload(raw_items)
+    os.makedirs("public/data", exist_ok=True)
+    path = os.path.join("public", "data", "naver-promotions-today.json")
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    print("💾 네이버 프로모션 저장 완료:", path)
+
+
 def send_to_google_webapp(data):
     if not WEBAPP_URL:
         print("❌ WEBAPP_URL 환경변수가 없습니다.")
@@ -320,7 +315,6 @@ def run_naver():
     raw_items = fetch_naver_top20_raw()
     data_for_sheet = build_payload_for_google(raw_items)
 
-    # 로컬 확인용
     for row in data_for_sheet:
         if "promotion" in row:
             print("PROMO:", row["rank"], row["title"], row["promotion"])
@@ -331,7 +325,8 @@ def run_naver():
         json.dump(data_for_sheet, f, ensure_ascii=False, indent=2)
     print("💾 저장 완료:", path)
 
-    # 실제 시트 연동 시에만 사용
+    save_naver_promotions_json(raw_items)
+
     # send_to_google_webapp(data_for_sheet)
     print("✅ 네이버 수집 완료")
 
