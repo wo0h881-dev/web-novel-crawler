@@ -7,6 +7,7 @@ import re
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs
+from typing import Optional, Dict
 
 BASE = "https://series.naver.com"
 RANKING_URL = (
@@ -32,7 +33,7 @@ def get_product_no_from_href(href: str) -> str:
 
 # ---------------- 프로모션 파싱 ----------------
 
-def parse_promotion_from_list_li(li):
+def parse_promotion_from_list_li(li) -> Optional[Dict]:
     """
     TOP100 리스트 <li> 하나에서 프로모션 정보 추출.
     - timeFreeType: waitFree / threeHour / pass / none
