@@ -2,10 +2,9 @@ name: Update Kakao & Naver Ranking
 
 on:
   schedule:
-    # 매일 한국 시간 오후 8시 실행 (UTC 11:00)
+  #매일 한국 시간 오후 8시
     - cron: '0 11 * * *'
-  workflow_dispatch: # 수동 실행 버튼
-  
+  workflow_dispatch:
 
 jobs:
   build:
@@ -26,13 +25,12 @@ jobs:
           pip install requests playwright beautifulsoup4
           playwright install chromium
 
-      - name: Run main.py (Kakao + Naver)
+      - name: Run main.py (Kakao + Naver + Ridi)
         env:
-          # GitHub Secrets에 저장한 구글 웹앱 주소
           WEBAPP_URL: ${{ secrets.WEBAPP_URL }}
         run: python main.py
 
-              - name: Push JSON to Lovable_Dashboard
+      - name: Push JSON to Lovable_Dashboard
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
@@ -54,5 +52,4 @@ jobs:
           git add public/data/ridi-promotions-today.json
 
           git commit -m "update promotion json" || echo "No changes"
-
           git push
