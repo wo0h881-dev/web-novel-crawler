@@ -327,7 +327,7 @@ def run_naver():
 
     save_naver_promotions_json(raw_items)
 
-    # send_to_google_webapp(data_for_sheet)
+    send_to_google_webapp(data_for_sheet)
     print("✅ 네이버 수집 완료")
 
 
