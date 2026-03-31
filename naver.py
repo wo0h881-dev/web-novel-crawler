@@ -244,7 +244,7 @@ def fetch_naver_top20_raw():
 
 
 def build_payload_for_google(raw_items):
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    today = (datetime.datetime.utcnow() + datetime.timedelta(hours=9)).strftime("%Y-%m-%d")
     result = []
 
     for item in raw_items:
