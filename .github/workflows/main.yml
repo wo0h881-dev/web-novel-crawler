@@ -31,3 +31,28 @@ jobs:
           # GitHub Secrets에 저장한 구글 웹앱 주소
           WEBAPP_URL: ${{ secrets.WEBAPP_URL }}
         run: python main.py
+
+              - name: Push JSON to Lovable_Dashboard
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+
+          git clone https://x-access-token:${GH_TOKEN}@github.com/wo0h881-dev/Lovable_Dashboard.git
+
+          mkdir -p Lovable_Dashboard/public/data
+
+          cp public/data/kakao-promotions-today.json Lovable_Dashboard/public/data/
+          cp public/data/naver-promotions-today.json Lovable_Dashboard/public/data/
+          cp public/data/ridi-promotions-today.json Lovable_Dashboard/public/data/
+
+          cd Lovable_Dashboard
+
+          git add public/data/kakao-promotions-today.json
+          git add public/data/naver-promotions-today.json
+          git add public/data/ridi-promotions-today.json
+
+          git commit -m "update promotion json" || echo "No changes"
+
+          git push
