@@ -4,7 +4,7 @@ import datetime
 import re
 import requests
 from bs4 import BeautifulSoup
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Any
 
 BASE_URL = "https://ridibooks.com"
 
@@ -30,6 +30,22 @@ def fetch_html(url: str) -> BeautifulSoup:
     return BeautifulSoup(resp.text, "html.parser")
 
 
+def clean_text(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def unique_dict_list(items: List[Dict[str, Any]], key_fields: List[str]) -> List[Dict[str, Any]]:
+    seen = set()
+    result = []
+    for item in items:
+        key = tuple(item.get(k, "") for k in key_fields)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
 def parse_ridi_promotion(item) -> Optional[Dict]:
     promo = {
         "timeFreeType": "none",
@@ -40,6 +56,9 @@ def parse_ridi_promotion(item) -> Optional[Dict]:
         "notices": [],
         "ridiWaitFree": False,
         "ridiFreeLabel": None,
+        "ridiWaitFreeText": None,
+        "serialSchedule": None,
+        "exclusiveText": None,
     }
 
     thumb_link = item.select_one("a.fig-1q776eq, a.fig-1q776eq.e1ftn9sh1, a.fig-w1hthz")
@@ -78,6 +97,168 @@ def parse_ridi_promotion(item) -> Optional[Dict]:
     promo["ridiFreeLabel"] = ridi_free_label
 
     return promo
+
+
+def parse_ridi_detail_promotion(work_url: str) -> Optional[Dict]:
+    if not work_url:
+        return None
+
+    try:
+        soup = fetch_html(work_url)
+    except Exception as e:
+        print(f"⚠️ 리디 상세 수집 실패: {work_url} / {e}")
+        return None
+
+    detail = {
+        "eventBanners": [],
+        "notices": [],
+        "ridiWaitFreeText": None,
+        "serialSchedule": None,
+        "exclusiveText": None,
+    }
+
+    rows = soup.select('[role="row"]')
+    if not rows:
+        return None
+
+    for row in rows:
+        header_el = row.select_one('[role="rowheader"]')
+        if not header_el:
+            continue
+
+        header = clean_text(header_el.get_text(" ", strip=True))
+        if not header:
+            continue
+
+        # 연재
+        if header == "연재":
+            li_texts = [
+                clean_text(li.get_text(" ", strip=True))
+                for li in row.select("ul li")
+            ]
+            li_texts = [t for t in li_texts if t]
+            if li_texts:
+                detail["serialSchedule"] = li_texts[0]
+            continue
+
+        # 공지
+        if header == "공지":
+            notices = []
+
+            # 공지 제목 버튼
+            for btn in row.select("button"):
+                text = clean_text(btn.get_text(" ", strip=True))
+                if not text:
+                    continue
+
+                # 불필요한 버튼 제외
+                if text in {"공지 더보기", "더 보기"}:
+                    continue
+
+                # 너무 긴 본문 버튼은 제외하고 제목성 문구 위주만 채택
+                if len(text) > 120:
+                    continue
+
+                # 제목으로 보기 좋은 값만 저장
+                notices.append({
+                    "label": "공지",
+                    "title": text,
+                })
+
+            detail["notices"] = unique_dict_list(notices, ["label", "title"])
+            continue
+
+        # 이벤트
+        if header == "이벤트":
+            events = []
+            for a in row.select('a[href]'):
+                text = clean_text(a.get_text(" ", strip=True))
+                if not text:
+                    continue
+                events.append({"title": text})
+
+            detail["eventBanners"] = unique_dict_list(events, ["title"])
+            continue
+
+        # 독점
+        if header == "독점":
+            text = clean_text(row.get_text(" ", strip=True))
+            if text:
+                # "독점" 헤더 제거
+                text = re.sub(r"^독점\s*", "", text).strip()
+                detail["exclusiveText"] = text or None
+            continue
+
+        # 리다무
+        if header == "리다무":
+            text = clean_text(row.get_text(" ", strip=True))
+            if text:
+                # "리다무" 헤더 제거
+                text = re.sub(r"^리다무\s*", "", text).strip()
+                detail["ridiWaitFreeText"] = text or None
+            continue
+
+    has_any = any([
+        detail["eventBanners"],
+        detail["notices"],
+        detail["ridiWaitFreeText"],
+        detail["serialSchedule"],
+        detail["exclusiveText"],
+    ])
+
+    return detail if has_any else None
+
+
+def merge_ridi_promotion(base: Optional[Dict], detail: Optional[Dict]) -> Optional[Dict]:
+    if not base and not detail:
+        return None
+
+    merged = {
+        "timeFreeType": "none",
+        "tag": "",
+        "freeEpisodes": None,
+        "daysLeft": None,
+        "eventBanners": [],
+        "notices": [],
+        "ridiWaitFree": False,
+        "ridiFreeLabel": None,
+        "ridiWaitFreeText": None,
+        "serialSchedule": None,
+        "exclusiveText": None,
+    }
+
+    if base:
+        merged.update(base)
+
+    if detail:
+        if detail.get("eventBanners"):
+            merged["eventBanners"] = detail["eventBanners"]
+
+        if detail.get("notices"):
+            merged["notices"] = detail["notices"]
+
+        if detail.get("ridiWaitFreeText"):
+            merged["ridiWaitFreeText"] = detail["ridiWaitFreeText"]
+
+        if detail.get("serialSchedule"):
+            merged["serialSchedule"] = detail["serialSchedule"]
+
+        if detail.get("exclusiveText"):
+            merged["exclusiveText"] = detail["exclusiveText"]
+
+    has_any = any([
+        merged.get("tag"),
+        merged.get("freeEpisodes") is not None,
+        merged.get("ridiWaitFree"),
+        merged.get("ridiFreeLabel"),
+        merged.get("eventBanners"),
+        merged.get("notices"),
+        merged.get("ridiWaitFreeText"),
+        merged.get("serialSchedule"),
+        merged.get("exclusiveText"),
+    ])
+
+    return merged if has_any else None
 
 
 def parse_list(list_url: str, category_key: str):
@@ -164,7 +345,9 @@ def parse_list(list_url: str, category_key: str):
         else:
             thumbnail_url = "-"
 
-        promotion = parse_ridi_promotion(item)
+        base_promotion = parse_ridi_promotion(item)
+        detail_promotion = parse_ridi_detail_promotion(work_url) if work_url else None
+        promotion = merge_ridi_promotion(base_promotion, detail_promotion)
 
         result = {
             "카테고리": category_key,
