@@ -193,11 +193,20 @@ def run_kakao_realtime_rank():
 
                     # 2) 작가
                     author = "-"
-                    author_el = d_page.locator(
-                        "span.text-el-70.opacity-70"
-                    ).first
-                    if author_el.count() > 0:
-                        author = author_el.inner_text().strip()
+                    
+                    try:
+                        author_el = d_page.locator(
+                            "span.font-small2.mb-6pxr.text-ellipsis"
+                        ).first
+                        
+                        if author_el.count() > 0:
+                            author = author_el.inner_text().strip()
+                      
+                        print("🧪 AUTHOR:", author)
+
+                    except Exception as e:
+                         print("❌ AUTHOR_ERR:", e)
+   
 
                     # 3) 장르
                     genre = "-"
