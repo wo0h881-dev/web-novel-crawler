@@ -219,10 +219,25 @@ def run_kakao_realtime_rank():
                         genre = genre_elements[0].replace("웹소설", "").strip()
 
                     # 4) 조회수 (본문 텍스트에서 첫 번째 '만/억' 패턴)
-                    body_text = d_page.evaluate("() => document.body.innerText")
-                    view_match = re.search(r"(\d+\.?\d*[만억])", body_text)
-                    views = view_match.group(1) if view_match else "-"
+                    views = "-"
+                    
+                    try:
+                        candidates = d_page.locator("span.opacity-70").all_inner_texts()
 
+                        print("🧪 VIEW_CANDIDATES:", candidates)
+                        
+                        for t in candidates:
+                            t = t.strip()
+                            
+                            # 조회수 패턴만 잡기
+                            if re.search(r"\d+[.,]?\d*[만억]", t):
+                                views = t
+                                break
+
+                    except Exception as e:
+                         print("❌ VIEWS_ERR:", e)
+
+                    
                     # 5) 정보 탭으로 이동 (발행자용)
                     try:
                         info_tab = d_page.locator(
