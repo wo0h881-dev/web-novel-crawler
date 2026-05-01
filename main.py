@@ -10,6 +10,113 @@ from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
 
+KAKAO_RANKING_URL = "https://page.kakao.com/menu/10011/screen/94"
+
+
+def collect_kakao_content_links(page):
+    """
+    Kakao keeps changing the hydrated ranking DOM. Prefer the browser DOM, but
+    fall back to the server-rendered HTML because it currently contains the
+    full ranking list even when hydration leaves only a few links.
+    """
+    links = []
+
+    try:
+        links = page.eval_on_selector_all(
+            'a[href*="/content/"]',
+            "elements => elements.map(e => e.href)",
+        )
+    except Exception as e:
+        print("KAKAO_LINK_BROWSER_ERR:", e)
+
+    try:
+        response = requests.get(
+            KAKAO_RANKING_URL,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/122.0.0.0 Safari/537.36"
+                )
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+        for a in soup.select('a[href*="/content/"]'):
+            href = a.get("href", "").strip()
+            if not href:
+                continue
+            if href.startswith("/"):
+                href = "https://page.kakao.com" + href
+            links.append(href)
+    except Exception as e:
+        print("KAKAO_LINK_STATIC_ERR:", e)
+
+    unique_links = []
+    for link in links:
+        if link and link not in unique_links:
+            unique_links.append(link)
+    return unique_links
+
+
+def extract_kakao_episode_and_comment_counts(d_page):
+    """
+    Current Kakao detail pages expose totals as text blocks like:
+      전체 91 ... episode list ...
+      전체 66 ... comment list ...
+    The old icon-container order is brittle, so use text totals first and keep
+    the old selector path as a fallback.
+    """
+    total_episodes = "-"
+    comments = "-"
+
+    try:
+        body_text = d_page.locator("body").inner_text(timeout=3000)
+        totals = [m.group(1).replace(",", "") for m in re.finditer(r"전체\s*([\d,]+)", body_text)]
+        if totals:
+            total_episodes = f"{totals[0]}화"
+        if len(totals) >= 2:
+            comments = totals[1]
+    except Exception as e:
+        print("KAKAO_TOTAL_TEXT_ERR:", e)
+
+    if total_episodes != "-" and comments != "-":
+        return total_episodes, comments
+
+    try:
+        episode_container = d_page.locator(
+            "div.flex.h-full.flex-1.items-center.space-x-8pxr"
+        ).first
+        if total_episodes == "-" and episode_container.count() > 0:
+            ep_text_el = episode_container.locator(
+                "span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70"
+            ).first
+            if ep_text_el.count() > 0:
+                ep_text = ep_text_el.inner_text().strip()
+                m = re.search(r"(\d[\d,]*)", ep_text)
+                if m:
+                    total_episodes = f"{m.group(1).replace(',', '')}화"
+
+        comment_container = d_page.locator(
+            "div.flex.h-full.flex-1.items-center.space-x-8pxr"
+        ).nth(1)
+        if comments == "-" and comment_container.count() > 0:
+            c_text_el = comment_container.locator(
+                "span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70"
+            ).first
+            if c_text_el.count() > 0:
+                c_text = c_text_el.inner_text().strip()
+                m = re.search(r"([\d.,]+)", c_text)
+                if m:
+                    core = m.group(1)
+                    comments = core + "만" if "만" in c_text else core.replace(",", "")
+    except Exception as e:
+        print("KAKAO_TOTAL_FALLBACK_ERR:", e)
+
+    return total_episodes, comments
+
+
 def extract_time_free_type(d_page):
     """
     3다무 / 기다무 / 없음 구분
@@ -155,19 +262,13 @@ def run_kakao_realtime_rank():
 
         try:
             # 실시간 랭킹 페이지
-            url = "https://page.kakao.com/menu/10011/screen/94"
+            url = KAKAO_RANKING_URL
             page.goto(url, wait_until="networkidle")
             page.wait_for_timeout(5000)
 
             # 작품 링크 수집
-            links = page.eval_on_selector_all(
-                'a[href*="/content/"]',
-                "elements => elements.map(e => e.href)",
-            )
-            unique_links = []
-            for link in links:
-                if link not in unique_links:
-                    unique_links.append(link)
+            unique_links = collect_kakao_content_links(page)
+            print("KAKAO_LINK_COUNT:", len(unique_links))
 
             final_results = []
             today = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -292,44 +393,7 @@ def run_kakao_realtime_rank():
                         print("HOME_TAB_ERR:", e)
 
                     # 9) 총 회차수 & 댓글 수
-                    total_episodes = "-"
-                    comments = "-"
-
-                    try:
-                        # 회차수 컨테이너 (첫 번째)
-                        episode_container = d_page.locator(
-                            "div.flex.h-full.flex-1.items-center.space-x-8pxr"
-                        ).first
-                        if episode_container.count() > 0:
-                            ep_text_el = episode_container.locator(
-                                "span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70"
-                            ).first
-                            if ep_text_el.count() > 0:
-                                ep_text = ep_text_el.inner_text().strip()
-                                m = re.search(r"(\d[\d,]*)", ep_text)
-                                if m:
-                                    num = m.group(1).replace(",", "")
-                                    total_episodes = f"{num}화"
-
-                        # 댓글 컨테이너 (두 번째)
-                        comment_container = d_page.locator(
-                            "div.flex.h-full.flex-1.items-center.space-x-8pxr"
-                        ).nth(1)
-                        if comment_container.count() > 0:
-                            c_text_el = comment_container.locator(
-                                "span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70"
-                            ).first
-                            if c_text_el.count() > 0:
-                                c_text = c_text_el.inner_text().strip()
-                                m2 = re.search(r"([\d.,]+)", c_text)
-                                if m2:
-                                    core = m2.group(1)
-                                    if "만" in c_text:
-                                        comments = core + "만"
-                                    else:
-                                        comments = core.replace(",", "")
-                    except Exception as e:
-                        print("EP/COMMENT_ERR:", e)
+                    total_episodes, comments = extract_kakao_episode_and_comment_counts(d_page)
 
                     # 10) 프로모션 정보
                     time_free_type = extract_time_free_type(d_page)
