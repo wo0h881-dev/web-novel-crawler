@@ -247,6 +247,41 @@ def parse_ridamu_text(row) -> Optional[str]:
     return text or None
 
 
+def normalize_count_text(value: str) -> Optional[str]:
+    text = clean_text(value)
+    if not text or text == "-":
+        return None
+
+    if text.endswith("\uB9CC"):
+        n = float(text[:-1].replace(",", "").strip() or 0)
+        return str(int(round(n * 10000)))
+
+    m = re.search(r"\d[\d,]*", text)
+    if not m:
+        return None
+
+    return m.group(0).replace(",", "")
+
+
+def parse_ridi_comment_count(soup: BeautifulSoup) -> str:
+    body_text = clean_text(soup.get_text(" ", strip=True))
+    patterns = [
+        r"\uAD6C\uB9E4\uC790\s*([\d,]+(?:\.\d+)?\s*\uB9CC?)\s*\uC804\uCCB4\s*[\d,]+",
+        r"\uAD6C\uB9E4\uC790\s*([\d,]+(?:\.\d+)?\s*\uB9CC?)",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, body_text, flags=re.IGNORECASE)
+        if not m:
+            m = re.search(pattern, str(soup), flags=re.IGNORECASE)
+        if m:
+            normalized = normalize_count_text(m.group(1))
+            if normalized:
+                return normalized
+
+    return "-"
+
+
 def parse_ridi_detail_promotion(work_url: str) -> Optional[Dict]:
     if not work_url:
         return None
@@ -264,12 +299,10 @@ def parse_ridi_detail_promotion(work_url: str) -> Optional[Dict]:
         "ridiWaitFreeText": None,
         "serialSchedule": None,
         "exclusiveText": None,
+        "comments": parse_ridi_comment_count(soup),
     }
 
     rows = soup.select('[role="row"]')
-    if not rows:
-        return None
-
     for row in rows:
         header = extract_row_header_text(row)
         if not header:
@@ -306,6 +339,7 @@ def parse_ridi_detail_promotion(work_url: str) -> Optional[Dict]:
         detail["ridiWaitFreeText"],
         detail["serialSchedule"],
         detail["exclusiveText"],
+        detail["comments"] != "-",
     ])
 
     return detail if has_any else None
@@ -454,6 +488,11 @@ def parse_list(list_url: str, category_key: str):
 
         base_promotion = parse_ridi_promotion(item)
         detail_promotion = parse_ridi_detail_promotion(work_url) if work_url else None
+        comments = (
+            detail_promotion.get("comments", "-")
+            if isinstance(detail_promotion, dict)
+            else "-"
+        )
         promotion = merge_ridi_promotion(base_promotion, detail_promotion)
 
         result = {
@@ -467,6 +506,7 @@ def parse_list(list_url: str, category_key: str):
             "totalEpisodes": total_episodes,
             "rating": rating,
             "ridi_rating_count": ridi_rating_count,
+            "comments": comments,
             "thumbnail": thumbnail_url,
             "url": work_url,
         }
