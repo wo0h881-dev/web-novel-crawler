@@ -1,10 +1,13 @@
-import os
-import json
+import atexit
 import datetime
+import json
+import os
 import re
+from typing import Any, Dict, List, Optional
+
 import requests
 from bs4 import BeautifulSoup
-from typing import Optional, Dict, List, Any
+from playwright.sync_api import sync_playwright
 
 BASE_URL = "https://ridibooks.com"
 
@@ -20,454 +23,429 @@ HEADERS = {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/122.0.0.0 Safari/537.36"
-    )
+    ),
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,image/apng,*/*;q=0.8"
+    ),
+    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
 }
 
-
-def fetch_html(url: str) -> BeautifulSoup:
-    resp = requests.get(url, headers=HEADERS, timeout=10)
-    resp.raise_for_status()
-    return BeautifulSoup(resp.text, "html.parser")
+_playwright = None
+_browser = None
+_context = None
 
 
 def clean_text(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip())
 
 
-def normalize_ridamu_text(text: str) -> str:
-    text = clean_text(text)
-    if not text:
-        return text
-
-    # 6시간 마다 -> 6시간마다
-    text = re.sub(r"(\d+\s*시간)\s+마다", r"\1마다", text)
-    text = re.sub(r"(\d+\s*일)\s+마다", r"\1마다", text)
-    text = re.sub(r"(\d+\s*분)\s+마다", r"\1마다", text)
-
-    # 1편 기다리면 무료 / 1화 기다리면 무료 형태 정리
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-
-def unique_dict_list(items: List[Dict[str, Any]], key_fields: List[str]) -> List[Dict[str, Any]]:
-    seen = set()
-    result = []
-    for item in items:
-        key = tuple(item.get(k, "") for k in key_fields)
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(item)
-    return result
-
-
-def parse_ridi_promotion(item) -> Optional[Dict]:
-    promo = {
-        "timeFreeType": "none",
-        "tag": "",
-        "freeEpisodes": None,
-        "daysLeft": None,
-        "eventBanners": [],
-        "notices": [],
-        "benefits": [],
-        "ridiWaitFree": False,
-        "ridiFreeLabel": None,
-        "ridiWaitFreeText": None,
-        "serialSchedule": None,
-        "exclusiveText": None,
-    }
-
-    thumb_link = item.select_one("a.fig-1q776eq, a.fig-1q776eq.e1ftn9sh1, a.fig-w1hthz")
-    if not thumb_link:
-        return None
-
-    badges = thumb_link.select("ul.fig-1i4k0g9 li[aria-label]")
-
-    tag_parts = []
-    free_episodes = None
-    ridi_free_label = None
-    ridi_waitfree = False
-
-    for li in badges:
-        label = li.get("aria-label", "").strip()
-        if not label:
-            continue
-
-        tag_parts.append(label)
-
-        if "리다무" in label:
-            promo["timeFreeType"] = "waitFree"
-            ridi_waitfree = True
-
-        m = re.search(r"(\d+)\s*화\s*무료", label)
-        if m:
-            free_episodes = int(m.group(1))
-            ridi_free_label = m.group(0)
-
-    if not tag_parts and free_episodes is None and not ridi_waitfree:
-        return None
-
-    promo["tag"] = " ".join(tag_parts)
-    promo["freeEpisodes"] = free_episodes
-    promo["ridiWaitFree"] = ridi_waitfree
-    promo["ridiFreeLabel"] = ridi_free_label
-
-    return promo
-
-
-def extract_row_header_text(row) -> str:
-    header_el = row.select_one('[role="rowheader"]')
-    if not header_el:
+def normalize_href(href: str) -> str:
+    if not href:
         return ""
-    return clean_text(header_el.get_text(" ", strip=True))
+    if href.startswith("/"):
+        return BASE_URL + href
+    return href
 
 
-def parse_notice_titles(row) -> List[Dict[str, Any]]:
-    notices = []
-
-    # 공지 제목 버튼만 수집
-    # 원본 기준 제목 버튼은 화살표가 붙은 첫 번째 버튼이고,
-    # 본문 버튼은 뒤쪽의 긴 설명문 버튼이라 제외한다.
-    for btn in row.select("button"):
-        text = clean_text(btn.get_text(" ", strip=True))
-        if not text:
-            continue
-
-        if text in {"공지 더보기", "더 보기"}:
-            continue
-
-        # 본문성 긴 문장 제외
-        if len(text) > 60:
-            continue
-        if text.endswith("부탁드립니다."):
-            continue
-        if "작품 이용에 참고 부탁드립니다" in text:
-            continue
-        if "독자님들의 많은 관심 부탁드립니다" in text:
-            continue
-
-        notices.append({
-            "label": "공지",
-            "title": text,
-        })
-
-    return unique_dict_list(notices, ["label", "title"])
+def get_work_id_from_href(href: str) -> str:
+    match = re.search(r"/books/(\d+)", href or "")
+    return match.group(1) if match else ""
 
 
-def parse_benefits(row) -> List[Dict[str, Any]]:
-    benefits = []
+def get_browser_context():
+    global _playwright, _browser, _context
 
-    for li in row.select("ul li"):
-        title = None
-        subtitle = None
+    if _context is not None:
+        return _context
 
-        # 제목 후보
-        title_candidates = [
-            "span.rigrid-ke9tut",
-            "a > div div span.rigrid-ke9tut",
-            "a div span.rigrid-ke9tut",
-        ]
-        for sel in title_candidates:
-            el = li.select_one(sel)
-            if el:
-                title = clean_text(el.get_text(" ", strip=True))
-                if title:
-                    break
-
-        # 보조 설명 후보
-        subtitle_candidates = [
-            "div.rigrid-1tf5hrm",
-            "div.rigrid-jpipff",
-        ]
-        for sel in subtitle_candidates:
-            el = li.select_one(sel)
-            if el:
-                subtitle = clean_text(el.get_text(" ", strip=True))
-                if subtitle:
-                    break
-
-        # 셀렉터가 깨질 때를 대비한 fallback
-        if not title:
-            texts = [
-                clean_text(x.get_text(" ", strip=True))
-                for x in li.select("span, div")
-            ]
-            texts = [t for t in texts if t]
-            if texts:
-                title = texts[0]
-                if len(texts) >= 2:
-                    subtitle = texts[-1] if texts[-1] != title else None
-
-        if title:
-            benefit = {
-                "label": "혜택",
-                "title": title,
-            }
-            if subtitle and subtitle != title:
-                benefit["subtitle"] = subtitle
-            benefits.append(benefit)
-
-    return unique_dict_list(benefits, ["label", "title", "subtitle"])
+    _playwright = sync_playwright().start()
+    _browser = _playwright.chromium.launch(headless=True)
+    _context = _browser.new_context(
+        user_agent=HEADERS["User-Agent"],
+        locale="ko-KR",
+    )
+    return _context
 
 
-def parse_event_banners(row) -> List[Dict[str, Any]]:
-    events = []
-    for a in row.select('a[href]'):
-        text = clean_text(a.get_text(" ", strip=True))
-        if not text:
-            continue
-        events.append({"title": text})
-    return unique_dict_list(events, ["title"])
+def close_browser_context():
+    global _playwright, _browser, _context
+
+    if _context is not None:
+        _context.close()
+        _context = None
+
+    if _browser is not None:
+        _browser.close()
+        _browser = None
+
+    if _playwright is not None:
+        _playwright.stop()
+        _playwright = None
 
 
-def parse_serial_schedule(row) -> Optional[str]:
-    li_texts = [
-        clean_text(li.get_text(" ", strip=True))
-        for li in row.select("ul li")
-    ]
-    li_texts = [t for t in li_texts if t]
-    return li_texts[0] if li_texts else None
+atexit.register(close_browser_context)
 
 
-def parse_exclusive_text(row) -> Optional[str]:
-    text = clean_text(row.get_text(" ", strip=True))
-    if not text:
-        return None
-    text = re.sub(r"^독점\s*", "", text).strip()
-    return text or None
-
-
-def parse_ridamu_text(row) -> Optional[str]:
-    text = clean_text(row.get_text(" ", strip=True))
-    if not text:
-        return None
-    text = re.sub(r"^리다무\s*", "", text).strip()
-    text = re.sub(r"무료 이용 가능$", "", text).strip()
-    text = normalize_ridamu_text(text)
-    return text or None
-
-
-def parse_ridi_detail_promotion(work_url: str) -> Optional[Dict]:
-    if not work_url:
-        return None
-
+def fetch_html_with_browser(url: str) -> str:
+    context = get_browser_context()
+    page = context.new_page()
     try:
-        soup = fetch_html(work_url)
-    except Exception as e:
-        print(f"⚠️ 리디 상세 수집 실패: {work_url} / {e}")
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(1500)
+        return page.content()
+    finally:
+        page.close()
+
+
+def fetch_html(url: str) -> BeautifulSoup:
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        response.raise_for_status()
+        return BeautifulSoup(response.text, "html.parser")
+    except requests.HTTPError as e:
+        if getattr(e.response, "status_code", None) != 403:
+            raise
+    except requests.RequestException:
+        pass
+
+    html = fetch_html_with_browser(url)
+    return BeautifulSoup(html, "html.parser")
+
+
+def get_book_anchor(item):
+    candidates = []
+
+    for anchor in item.find_all("a", href=True):
+        href = anchor.get("href", "")
+        text = clean_text(anchor.get_text(" ", strip=True))
+        if "/books/" not in href:
+            continue
+        candidates.append((anchor, text))
+
+    text_candidates = [entry for entry in candidates if entry[1] and entry[1].lower() != "image"]
+    if text_candidates:
+        return text_candidates[0][0]
+
+    if candidates:
+        return candidates[0][0]
+
+    return None
+
+
+def get_card_candidates(soup) -> List[Any]:
+    cards_by_work_id: Dict[str, Any] = {}
+    card_order: List[str] = []
+
+    for anchor in soup.find_all("a", href=True):
+        href = anchor.get("href", "")
+        title = clean_text(anchor.get_text(" ", strip=True))
+        if "/books/" not in href or not title or title.lower() == "image":
+            continue
+
+        card = None
+        for parent in anchor.parents:
+            if getattr(parent, "name", None) != "li":
+                continue
+            item_text = clean_text(parent.get_text(" ", strip=True))
+            if title not in item_text:
+                continue
+            if not re.search(r"총\s*[\d,]+\s*화", item_text):
+                continue
+            card = parent
+            break
+
+        if card is None:
+            continue
+
+        work_url = normalize_href(href)
+        work_id = get_work_id_from_href(work_url) or work_url
+        existing = cards_by_work_id.get(work_id)
+        if existing is None:
+            cards_by_work_id[work_id] = card
+            card_order.append(work_id)
+            continue
+
+        # Prefer the explicit ranked-list link over duplicated featured cards.
+        if "_rdt_idx=" in href and "_rdt_idx=" not in clean_text(existing.get("data-codex-href", "")):
+            card["data-codex-href"] = href
+            cards_by_work_id[work_id] = card
+
+    cards = [cards_by_work_id[work_id] for work_id in card_order]
+    for card in cards:
+        if not card.get("data-codex-href"):
+            anchor = get_book_anchor(card)
+            if anchor:
+                card["data-codex-href"] = anchor.get("href", "")
+
+    return cards
+
+
+def get_anchor_texts(item, exclude_href: str) -> List[str]:
+    texts = []
+
+    for anchor in item.find_all("a", href=True):
+        href = normalize_href(anchor.get("href", ""))
+        text = clean_text(anchor.get_text(" ", strip=True))
+        if not text or text.lower() == "image":
+            continue
+        if href == exclude_href:
+            continue
+        texts.append(text)
+
+    deduped = []
+    for text in texts:
+        if text not in deduped:
+            deduped.append(text)
+    return deduped
+
+
+def get_card_lines(item) -> List[str]:
+    lines = []
+    for line in item.get_text("\n", strip=True).splitlines():
+        cleaned = clean_text(line)
+        if not cleaned or cleaned.lower() == "image":
+            continue
+        lines.append(cleaned)
+    return lines
+
+
+def get_book_url_map(soup) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    for anchor in soup.find_all("a", href=True):
+        href = anchor.get("href", "")
+        title = clean_text(anchor.get_text(" ", strip=True))
+        if "/books/" not in href or not title or title.lower() == "image":
+            continue
+        mapping.setdefault(title, normalize_href(href))
+    return mapping
+
+
+def extract_metadata_parts(meta_line: str):
+    parts = meta_line.split()
+    if len(parts) >= 3:
+        return parts[0], parts[1], " ".join(parts[2:])
+    if len(parts) == 2:
+        return parts[0], parts[1], "-"
+    if len(parts) == 1:
+        return parts[0], "-", "-"
+    return "-", "-", "-"
+
+
+def parse_ranked_entries(soup, category_key: str) -> List[Dict[str, str]]:
+    lines = [clean_text(line) for line in soup.get_text("\n").splitlines()]
+    lines = [line for line in lines if line]
+    book_url_map = get_book_url_map(soup)
+
+    entries: List[Dict[str, str]] = []
+    seen_titles = set()
+
+    for index, line in enumerate(lines):
+        stats_match = re.match(r"^총\s*([\d,]+)\s*화\s*([0-9.]+)\(([\d,]+)\)", line)
+        if not stats_match or index < 2:
+            continue
+
+        title = lines[index - 2]
+        if title in seen_titles:
+            continue
+
+        author, publisher, genre = extract_metadata_parts(lines[index - 1])
+        work_url = book_url_map.get(title, "")
+        if not work_url:
+            continue
+
+        rank_value = f"{len(entries) + 1}위"
+        for probe in range(index + 1, min(index + 4, len(lines))):
+            if re.fullmatch(r"\d{1,3}", lines[probe]):
+                rank_value = f"{int(lines[probe])}위"
+                break
+
+        entries.append(
+            {
+                "category": category_key,
+                "title": title,
+                "author": author,
+                "publisher": publisher,
+                "genre": genre or category_key,
+                "totalEpisodes": f"{stats_match.group(1)}화",
+                "rating": stats_match.group(2),
+                "ridi_rating_count": stats_match.group(3),
+                "rank": rank_value,
+                "url": work_url,
+            }
+        )
+        seen_titles.add(title)
+
+    return entries
+
+
+def parse_entries_from_cards(cards: List[Any], category_key: str) -> List[Dict[str, str]]:
+    entries: List[Dict[str, str]] = []
+    seen_titles = set()
+
+    for idx, card in enumerate(cards, start=1):
+        anchor = get_book_anchor(card)
+        if not anchor:
+            continue
+
+        title = clean_text(anchor.get_text(" ", strip=True))
+        work_url = normalize_href(anchor.get("href", ""))
+        if not title or not work_url or title in seen_titles:
+            continue
+
+        card_lines = get_card_lines(card)
+        item_text = clean_text(" ".join(card_lines))
+        anchor_texts = get_anchor_texts(card, work_url)
+        author = anchor_texts[0] if len(anchor_texts) >= 1 else "-"
+        publisher = anchor_texts[1] if len(anchor_texts) >= 2 else "-"
+        genre = extract_genre(item_text, title, author, publisher, category_key)
+        total_episodes, rating, ridi_rating_count = extract_series_stats(item_text)
+        rank_value = extract_rank(idx)
+
+        entries.append(
+            {
+                "category": category_key,
+                "title": title,
+                "author": author,
+                "publisher": publisher,
+                "genre": genre,
+                "totalEpisodes": total_episodes,
+                "rating": rating,
+                "ridi_rating_count": ridi_rating_count,
+                "rank": rank_value,
+                "url": work_url,
+            }
+        )
+        seen_titles.add(title)
+
+    return entries
+
+
+def extract_rank(fallback_rank: int) -> str:
+    return f"{fallback_rank}위"
+
+
+def extract_series_stats(item_text: str):
+    total_episodes = "-"
+    rating = "-"
+    rating_count = "-"
+
+    total_match = re.search(r"총\s*([\d,]+)\s*화", item_text)
+    if total_match:
+        total_episodes = f"{total_match.group(1)}화"
+
+    rating_match = re.search(r"총\s*[\d,]+\s*화\s*([0-9.]+)\s*\(\s*([\d,]+)\s*\)", item_text)
+    if not rating_match:
+        rating_match = re.search(r"([0-9.]+)\s*\(\s*([\d,]+)\s*\)", item_text)
+    if rating_match:
+        rating = rating_match.group(1)
+        rating_count = rating_match.group(2)
+
+    return total_episodes, rating, rating_count
+
+
+def split_metadata_text(item_text: str, title: str, author: str, publisher: str) -> str:
+    normalized = item_text
+    if title:
+        normalized = normalized.replace(title, "", 1).strip()
+    if author and author != "-":
+        normalized = normalized.replace(author, "", 1).strip()
+    if publisher and publisher != "-":
+        normalized = normalized.replace(publisher, "", 1).strip()
+    return normalized
+
+
+def extract_genre(item_text: str, title: str, author: str, publisher: str, category_key: str) -> str:
+    metadata_text = split_metadata_text(item_text, title, author, publisher)
+    match = re.search(r"^(.*?)\s+총\s*[\d,]+\s*화", metadata_text)
+    if match:
+        genre = clean_text(match.group(1))
+        if genre:
+            return genre
+    return category_key
+
+
+def build_promotion(item, item_text: str) -> Optional[Dict[str, Any]]:
+    labels = []
+    for node in item.select("[aria-label]"):
+        label = clean_text(node.get("aria-label", ""))
+        if label and label not in labels:
+            labels.append(label)
+
+    if not labels:
         return None
 
-    detail = {
-        "eventBanners": [],
-        "notices": [],
-        "benefits": [],
-        "ridiWaitFreeText": None,
-        "serialSchedule": None,
-        "exclusiveText": None,
-    }
+    combined = " ".join(labels)
+    time_free_type = "none"
+    if "리다무" in combined or "기다리면 무료" in combined:
+        time_free_type = "waitFree"
+    elif "시간" in combined and "무료" in combined:
+        time_free_type = "threeHour"
 
-    rows = soup.select('[role="row"]')
-    if not rows:
-        return None
+    free_episodes = None
+    free_match = re.search(r"(\d+)\s*화\s*무료", combined)
+    if free_match:
+        free_episodes = int(free_match.group(1))
 
-    for row in rows:
-        header = extract_row_header_text(row)
-        if not header:
-            continue
-
-        if header == "연재":
-            detail["serialSchedule"] = parse_serial_schedule(row)
-            continue
-
-        if header == "공지":
-            detail["notices"] = parse_notice_titles(row)
-            continue
-
-        if header == "혜택":
-            detail["benefits"] = parse_benefits(row)
-            continue
-
-        if header == "이벤트":
-            detail["eventBanners"] = parse_event_banners(row)
-            continue
-
-        if header == "독점":
-            detail["exclusiveText"] = parse_exclusive_text(row)
-            continue
-
-        if header == "리다무":
-            detail["ridiWaitFreeText"] = parse_ridamu_text(row)
-            continue
-
-    has_any = any([
-        detail["eventBanners"],
-        detail["notices"],
-        detail["benefits"],
-        detail["ridiWaitFreeText"],
-        detail["serialSchedule"],
-        detail["exclusiveText"],
-    ])
-
-    return detail if has_any else None
-
-
-def merge_ridi_promotion(base: Optional[Dict], detail: Optional[Dict]) -> Optional[Dict]:
-    if not base and not detail:
-        return None
-
-    merged = {
-        "timeFreeType": "none",
-        "tag": "",
-        "freeEpisodes": None,
+    return {
+        "timeFreeType": time_free_type,
+        "tag": combined,
+        "freeEpisodes": free_episodes,
         "daysLeft": None,
         "eventBanners": [],
         "notices": [],
         "benefits": [],
-        "ridiWaitFree": False,
-        "ridiFreeLabel": None,
+        "ridiWaitFree": time_free_type == "waitFree",
+        "ridiFreeLabel": free_match.group(0) if free_match else None,
         "ridiWaitFreeText": None,
         "serialSchedule": None,
         "exclusiveText": None,
     }
 
-    if base:
-        merged.update(base)
 
-    if detail:
-        if detail.get("eventBanners"):
-            merged["eventBanners"] = detail["eventBanners"]
-
-        if detail.get("notices"):
-            merged["notices"] = detail["notices"]
-
-        if detail.get("benefits"):
-            merged["benefits"] = detail["benefits"]
-
-        if detail.get("ridiWaitFreeText"):
-            merged["ridiWaitFreeText"] = detail["ridiWaitFreeText"]
-
-        if detail.get("serialSchedule"):
-            merged["serialSchedule"] = detail["serialSchedule"]
-
-        if detail.get("exclusiveText"):
-            merged["exclusiveText"] = detail["exclusiveText"]
-
-    has_any = any([
-        merged.get("tag"),
-        merged.get("freeEpisodes") is not None,
-        merged.get("ridiWaitFree"),
-        merged.get("ridiFreeLabel"),
-        merged.get("eventBanners"),
-        merged.get("notices"),
-        merged.get("benefits"),
-        merged.get("ridiWaitFreeText"),
-        merged.get("serialSchedule"),
-        merged.get("exclusiveText"),
-    ])
-
-    return merged if has_any else None
-
-
-def parse_list(list_url: str, category_key: str):
+def parse_list(list_url: str, category_key: str) -> List[Dict[str, Any]]:
     soup = fetch_html(list_url)
+    cards = get_card_candidates(soup)
+    card_by_title = {}
+    for card in cards:
+        card_anchor = get_book_anchor(card)
+        if not card_anchor:
+            continue
+        card_title = clean_text(card_anchor.get_text(" ", strip=True))
+        if card_title and card_title not in card_by_title:
+            card_by_title[card_title] = card
 
-    cards = soup.select("li.fig-1m9tqaj")
+    ranked_entries = parse_entries_from_cards(cards, category_key)
+    if not ranked_entries:
+        ranked_entries = parse_ranked_entries(soup, category_key)
     results = []
 
-    for item in cards:
-        title_tag = item.select_one("a.fig-w1hthz")
-        if not title_tag:
-            continue
+    for entry in ranked_entries:
+        title = entry["title"]
+        work_url = entry["url"]
+        card = card_by_title.get(title)
+        item_text = clean_text(card.get_text(" ", strip=True)) if card else ""
+        promotion = build_promotion(card, item_text) if card else None
 
-        title = title_tag.get_text(strip=True)
-
-        work_path = title_tag.get("href", "")
-        work_url = ""
-        work_id = ""
-
-        if work_path:
-            if work_path.startswith("/"):
-                work_url = BASE_URL + work_path
-            else:
-                work_url = work_path
-
-            m_id = re.search(r"/books/(\d+)", work_path)
-            if m_id:
-                work_id = m_id.group(1)
-
-        author_tag = item.select_one("a.fig-103urjl.e1s6unbg0")
-        publisher_tag = item.select_one("a.fig-103urjl.efs2tg41")
-
-        author = author_tag.get_text(strip=True) if author_tag else "-"
-        publisher = publisher_tag.get_text(strip=True) if publisher_tag else "-"
-
-        genre_tag = item.select_one("span.fig-gcx8hj.e1g90d6s0")
-        sub_genre = genre_tag.get_text(strip=True) if genre_tag else "-"
-
-        if category_key == "romance":
-            main_genre = "로맨스"
-            genre = f"{main_genre} · {sub_genre}" if sub_genre != "-" else main_genre
-        elif category_key == "rofan":
-            genre = sub_genre if sub_genre != "-" else "로맨스판타지"
-        elif category_key == "fantasy":
-            genre = sub_genre if sub_genre != "-" else "판타지"
-        elif category_key == "bl":
-            main_genre = "BL"
-            genre = f"{main_genre} · {sub_genre}" if sub_genre != "-" else main_genre
-        else:
-            genre = sub_genre or "웹소설"
-
-        total_ep_tag = item.select_one("span.fig-w746bu span")
-        total_episodes = total_ep_tag.get_text(strip=True) if total_ep_tag else "-"
-
-        rating = "-"
-        ridi_rating_count = "-"
-
-        rating_block = item.select_one("span.fig-mhc4m4.enp6wb0")
-        if rating_block:
-            texts = [t for t in rating_block.stripped_strings]
-            if texts:
-                rating = texts[0]
-
-        rating_count_span = item.select_one("span.fig-1d0qko5.enp6wb2")
-        if rating_count_span:
-            raw_count = "".join(rating_count_span.stripped_strings)
-            raw_count = raw_count.strip("()")
-            ridi_rating_count = raw_count if raw_count else "-"
-
-        badge = item.select_one("div.fig-ty289v")
-        is_promotion = False
-        rank_value = "-"
-        if badge:
-            badge_text = badge.get_text(strip=True)
-            if badge_text.isdigit():
-                rank_value = f"{int(badge_text)}위"
-            else:
-                if badge.select_one("svg"):
-                    is_promotion = True
-                    rank_value = "프로모션"
-
-        if work_id:
-            thumbnail_url = f"https://img.ridicdn.net/cover/{work_id}/large#1"
-        else:
-            thumbnail_url = "-"
-
-        base_promotion = parse_ridi_promotion(item)
-        detail_promotion = parse_ridi_detail_promotion(work_url) if work_url else None
-        promotion = merge_ridi_promotion(base_promotion, detail_promotion)
+        work_id_match = re.search(r"/books/(\d+)", work_url)
+        work_id = work_id_match.group(1) if work_id_match else ""
 
         result = {
-            "카테고리": category_key,
-            "rank": rank_value,
-            "is_promotion": is_promotion,
+            "category": entry["category"],
+            "카테고리": entry["category"],
+            "rank": entry["rank"],
+            "is_promotion": entry["rank"] == "프로모션",
             "title": title,
-            "author": author,
-            "genre": genre,
-            "출판사": publisher,
-            "totalEpisodes": total_episodes,
-            "rating": rating,
-            "ridi_rating_count": ridi_rating_count,
-            "thumbnail": thumbnail_url,
+            "author": entry["author"],
+            "publisher": entry["publisher"],
+            "출판사": entry["publisher"],
+            "genre": entry["genre"],
+            "totalEpisodes": entry["totalEpisodes"],
+            "rating": entry["rating"],
+            "ridi_rating_count": entry["ridi_rating_count"],
+            "thumbnail": f"https://img.ridicdn.net/cover/{work_id}/large#1" if work_id else "-",
             "url": work_url,
         }
         if promotion:
@@ -483,6 +461,17 @@ def run_ridi():
     for key, url in CATEGORY_URLS.items():
         try:
             items = parse_list(url, key)
+            print(f"RIDI_CATEGORY {key}: {len(items)}")
+            for sample in items[:3]:
+                print(
+                    "RIDI_SAMPLE "
+                    f"{key} | title={sample.get('title', '-')} | "
+                    f"author={sample.get('author', '-')} | "
+                    f"publisher={sample.get('publisher', '-')} | "
+                    f"rank={sample.get('rank', '-')} | "
+                    f"episodes={sample.get('totalEpisodes', '-')} | "
+                    f"ratingCount={sample.get('ridi_rating_count', '-')}"
+                )
             all_results.extend(items)
         except Exception as e:
             print(f"❌ 리디 {key} 에러: {e}")
@@ -518,9 +507,7 @@ def save_ridi_promotions_json(raw_items):
 
 if __name__ == "__main__":
     items = run_ridi()
-
-    for x in items[:30]:
-        if "promotion" in x:
-            print("PROMO:", x["카테고리"], x["title"], "=>", x["promotion"])
-
+    for item in items[:10]:
+        if item.get("promotion"):
+            print("PROMO:", item["category"], item["title"], "=>", item["promotion"])
     save_ridi_promotions_json(items)

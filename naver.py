@@ -22,6 +22,7 @@ HEADERS = {
 }
 
 WEBAPP_URL = os.environ.get("WEBAPP_URL")
+HTTP_TIMEOUT = (10, 120)
 
 
 def get_product_no_from_href(href: str) -> str:
@@ -92,7 +93,7 @@ def parse_promotion_from_list_li(li) -> Optional[Dict]:
 
 
 def fetch_detail_info(detail_url: str):
-    r = requests.get(detail_url, headers=HEADERS)
+    r = requests.get(detail_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
@@ -190,7 +191,7 @@ def fetch_detail_info(detail_url: str):
 
 
 def fetch_naver_top20_raw():
-    r = requests.get(RANKING_URL, headers=HEADERS)
+    r = requests.get(RANKING_URL, headers=HEADERS, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
@@ -305,9 +306,12 @@ def send_to_google_webapp(data):
         "data": json.dumps(data),
     }
 
-    resp = requests.post(WEBAPP_URL, data=payload)
-    print("📡 NAVER 상태코드:", resp.status_code)
-    print("📡 NAVER 응답:", resp.text)
+    try:
+        resp = requests.post(WEBAPP_URL, data=payload, timeout=HTTP_TIMEOUT)
+        print("📡 NAVER 상태코드:", resp.status_code)
+        print("📡 NAVER 응답:", resp.text)
+    except Exception as e:
+        print(f"❌ naver 전송 중 예외 발생: {e}")
 
 
 def run_naver():

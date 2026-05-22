@@ -6,11 +6,18 @@ import json
 import re
 import requests
 import datetime
+import sys
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
+
 KAKAO_RANKING_URL = "https://page.kakao.com/menu/10011/screen/94"
+HTTP_TIMEOUT = (10, 120)
 
 
 def collect_kakao_content_links(page):
@@ -115,6 +122,52 @@ def extract_kakao_episode_and_comment_counts(d_page):
         print("KAKAO_TOTAL_FALLBACK_ERR:", e)
 
     return total_episodes, comments
+
+
+def extract_kakao_rating(d_page, text_candidates=None):
+    rating_pattern = re.compile(r"^(?:10(?:\.0)?|[0-9](?:\.[0-9])?)$")
+
+    for text in text_candidates or []:
+        value = str(text).strip()
+        if rating_pattern.match(value):
+            return value
+
+    try:
+        candidates = d_page.locator("span.opacity-70").all_inner_texts()
+        for text in candidates:
+            value = str(text).strip()
+            if rating_pattern.match(value):
+                return value
+    except Exception as e:
+        print("KAKAO_RATING_TEXT_ERR:", e)
+
+    try:
+        rating_el = d_page.locator(
+            'img[alt="별점"] ~ span, img[alt*="별"] ~ span'
+        ).first
+        if rating_el.count() > 0:
+            value = rating_el.inner_text().strip()
+            if rating_pattern.match(value):
+                return value
+    except Exception as e:
+        print("KAKAO_RATING_SELECTOR_ERR:", e)
+
+    return "-"
+
+
+def log_kakao_payload_sample(items, limit=3):
+    print("KAKAO_PAYLOAD_SAMPLE_START")
+    for idx, item in enumerate(items[:limit], start=1):
+        print(
+            "KAKAO_SAMPLE "
+            f"{idx} | "
+            f"title={item.get('title', '-')} | "
+            f"rating={item.get('rating', '-')} | "
+            f"comments={item.get('comments', '-')} | "
+            f"totalEpisodes={item.get('totalEpisodes', '-')} | "
+            f"publisher={item.get('publisher', item.get('출판사', '-'))}"
+        )
+    print("KAKAO_PAYLOAD_SAMPLE_END")
 
 
 def extract_time_free_type(d_page):
@@ -263,8 +316,8 @@ def run_kakao_realtime_rank():
         try:
             # 실시간 랭킹 페이지
             url = KAKAO_RANKING_URL
-            page.goto(url, wait_until="networkidle")
-            page.wait_for_timeout(5000)
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(2500)
 
             # 작품 링크 수집
             unique_links = collect_kakao_content_links(page)
@@ -278,8 +331,8 @@ def run_kakao_realtime_rank():
                 d_page = None
                 try:
                     d_page = context.new_page()
-                    d_page.goto(link, wait_until="networkidle")
-                    d_page.wait_for_timeout(2500)
+                    d_page.goto(link, wait_until="domcontentloaded", timeout=30000)
+                    d_page.wait_for_timeout(1500)
 
                     # 0) 기본 대기
                     d_page.wait_for_timeout(1000)
@@ -321,13 +374,14 @@ def run_kakao_realtime_rank():
 
                     # 4) 조회수 (본문 텍스트에서 첫 번째 '만/억' 패턴)
                     views = "-"
+                    text_candidates = []
                     
                     try:
-                        candidates = d_page.locator("span.opacity-70").all_inner_texts()
+                        text_candidates = d_page.locator("span.opacity-70").all_inner_texts()
 
-                        print("🧪 VIEW_CANDIDATES:", candidates)
+                        print("🧪 VIEW_CANDIDATES:", text_candidates)
                         
-                        for t in candidates:
+                        for t in text_candidates:
                             t = t.strip()
                             
                             # 조회수 패턴만 잡기
@@ -373,12 +427,7 @@ def run_kakao_realtime_rank():
                     print("PUB:", publisher)
 
                     # 7) 평점
-                    rating = "-"
-                    rating_el = d_page.locator(
-                        'img[alt="별점"] + span.text-el-70.opacity-70'
-                    )
-                    if rating_el.count() > 0:
-                        rating = rating_el.inner_text().strip()
+                    rating = extract_kakao_rating(d_page, text_candidates)
 
                     # 8) 다시 홈 탭으로 이동
                     try:
@@ -407,6 +456,7 @@ def run_kakao_realtime_rank():
                         "genre": genre,
                         "views": views,
                         "thumbnail": thumbnail,
+                        "publisher": publisher,
                         "출판사": publisher,
                         "rating": rating,
                         "totalEpisodes": total_episodes,
@@ -429,6 +479,7 @@ def run_kakao_realtime_rank():
                         d_page.close()
 
             # 시트로 전송
+            log_kakao_payload_sample(final_results)
             send_to_unified_sheet(final_results, source="kakao")
 
             # Cloudflare용 프로모션 JSON 저장
@@ -452,7 +503,7 @@ def send_to_unified_sheet(data, source="kakao"):
     }
 
     try:
-        response = requests.post(WEBAPP_URL, data=payload)
+        response = requests.post(WEBAPP_URL, data=payload, timeout=HTTP_TIMEOUT)
         print(f"📡 {source.upper()} 상태코드:", response.status_code)
         print(f"📡 {source.upper()} 응답:", response.text)
     except Exception as e:
