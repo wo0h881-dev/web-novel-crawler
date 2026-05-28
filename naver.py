@@ -262,8 +262,7 @@ def build_payload_for_google(raw_items):
             "comments": item.get("comments", "-"),
             "totalEpisodes": item.get("totalEpisodes", "-"),
         }
-        if item.get("promotion"):
-            base["promotion"] = item["promotion"]
+        
         result.append(base)
 
     return result
