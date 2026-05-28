@@ -339,13 +339,22 @@ def run_kakao_realtime_rank():
                         "comments": comments,
                     }
 
+                    promo_item = None
+
                     if time_free_type != "none" or promotion:
-                        final_item["promotion"] = {
+                        promo_item = {
                             "timeFreeType": time_free_type,
                             **(promotion or {"notices": []}),
-                        }
+                         }
 
-                    final_results.append(final_item)
+                    if promo_item:
+                        final_item_for_json = dict(final_item)
+                        final_item_for_json["promotion"] = promo_item
+                        final_results.append(final_item_for_json)
+                    else:
+                        final_results.append(final_item)
+                        
+
                     print(f"✅ {i+1}위 완료: {title}")
 
                 except Exception as e:
@@ -355,7 +364,13 @@ def run_kakao_realtime_rank():
                         d_page.close()
 
             # 시트로 전송
-            send_to_unified_sheet(final_results, source="kakao")
+            sheet_results = []
+            for item in final_results:
+                row = dict(item)
+                row.pop("promotion", None)
+                sheet_results.append(row)
+
+            send_to_unified_sheet(sheet_results, source="kakao")
 
             # Cloudflare용 프로모션 JSON 저장
             save_kakao_promotions(final_results, today)
@@ -391,9 +406,15 @@ def run_ridi_all():
     if not results:
         print("⚠ 리디 결과 없음")
         return
-    send_to_unified_sheet(results, source="ridi")
-    save_ridi_promotions_json(results)
-    print("✅ 리디 전송 완료")
+    sheet_results = []
+    for item in results:
+       row = dict(item)
+       row.pop("promotion", None)
+       sheet_results.append(row)
+
+   send_to_unified_sheet(sheet_results, source="ridi")
+   save_ridi_promotions_json(results)
+   print("✅ 리디 전송 완료")
 
 
 if __name__ == "__main__":
