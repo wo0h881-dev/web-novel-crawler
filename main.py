@@ -403,18 +403,22 @@ def send_to_unified_sheet(data, source="kakao"):
 def run_ridi_all():
     print("🚀 리디 수집 시작...")
     results = run_ridi()
+    
     if not results:
         print("⚠ 리디 결과 없음")
         return
+    
     sheet_results = []
+    
     for item in results:
        row = dict(item)
        row.pop("promotion", None)
        sheet_results.append(row)
 
-   send_to_unified_sheet(sheet_results, source="ridi")
-   save_ridi_promotions_json(results)
-   print("✅ 리디 전송 완료")
+    send_to_unified_sheet(sheet_results, source="ridi")
+    save_ridi_promotions_json(results)
+   
+    print("✅ 리디 전송 완료")
 
 
 if __name__ == "__main__":
