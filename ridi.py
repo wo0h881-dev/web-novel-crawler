@@ -486,8 +486,10 @@ def parse_list(list_url: str, category_key: str):
         else:
             genre = sub_genre or "웹소설"
 
-        total_ep_tag = item.select_one("span.fig-w746bu span")
-        total_episodes = clean_text(total_ep_tag.get_text(" ", strip=True)) if total_ep_tag else "-"
+        full_text = item.get_text(" ", strip=True)
+
+        m_ep = re.search(r"총\s*([\d,]+)\s*화", full_text)
+        total_episodes = f"{m_ep.group(1)}화" if m_ep else "-"
 
         rating, ridi_rating_count = parse_rating_and_count(item)
         rank_value, is_promotion = extract_rank_from_card(item)
