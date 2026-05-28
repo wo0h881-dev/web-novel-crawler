@@ -312,7 +312,7 @@ def send_to_google_webapp(data):
             resp = requests.post(
                 WEBAPP_URL,
                 data=payload,
-                timeout=60,
+                timeout=120,
             )
 
             print("📡 NAVER 상태코드:", resp.status_code)
@@ -326,7 +326,10 @@ def send_to_google_webapp(data):
             if attempt < 2:
                 time.sleep(5)
 
-    raise RuntimeError("❌ NAVER WebApp 전송 최종 실패")
+    print("⚠️ NAVER WebApp 전송 최종 실패 - 다음 단계 계속 진행")
+    return
+
+
 
 
 
