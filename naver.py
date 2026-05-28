@@ -3,6 +3,7 @@ import json
 import datetime
 import re
 import requests
+import time
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs
 from typing import Optional, Dict
@@ -295,6 +296,7 @@ def save_naver_promotions_json(raw_items):
     print("💾 네이버 프로모션 저장 완료:", path)
 
 
+
 def send_to_google_webapp(data):
     if not WEBAPP_URL:
         print("❌ WEBAPP_URL 환경변수가 없습니다.")
@@ -305,9 +307,28 @@ def send_to_google_webapp(data):
         "data": json.dumps(data),
     }
 
-    resp = requests.post(WEBAPP_URL, data=payload)
-    print("📡 NAVER 상태코드:", resp.status_code)
-    print("📡 NAVER 응답:", resp.text)
+    for attempt in range(3):
+        try:
+            resp = requests.post(
+                WEBAPP_URL,
+                data=payload,
+                timeout=60,
+            )
+
+            print("📡 NAVER 상태코드:", resp.status_code)
+            print("📡 NAVER 응답:", resp.text)
+
+            return
+
+        except requests.exceptions.RequestException as e:
+            print(f"⚠️ NAVER 전송 실패 {attempt + 1}/3:", e)
+
+            if attempt < 2:
+                time.sleep(5)
+
+    raise RuntimeError("❌ NAVER WebApp 전송 최종 실패")
+
+
 
 
 def run_naver():
