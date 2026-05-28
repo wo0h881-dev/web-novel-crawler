@@ -2,9 +2,10 @@ import os
 import json
 import datetime
 import re
-import requests
-from bs4 import BeautifulSoup
 from typing import Optional, Dict, List, Any
+
+from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 
 BASE_URL = "https://ridibooks.com"
 
@@ -24,14 +25,31 @@ HEADERS = {
 }
 
 
-def fetch_html(url: str) -> BeautifulSoup:
-    resp = requests.get(url, headers=HEADERS, timeout=10)
-    resp.raise_for_status()
-    return BeautifulSoup(resp.text, "html.parser")
-
-
 def clean_text(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def fetch_html(url: str) -> BeautifulSoup:
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+            ],
+        )
+
+        page = browser.new_page(
+            user_agent=HEADERS["User-Agent"],
+            viewport={"width": 1365, "height": 900},
+            locale="ko-KR",
+        )
+
+        page.goto(url, wait_until="networkidle", timeout=45_000)
+        html = page.content()
+        browser.close()
+
+    return BeautifulSoup(html, "html.parser")
 
 
 def normalize_ridamu_text(text: str) -> str:
@@ -39,26 +57,60 @@ def normalize_ridamu_text(text: str) -> str:
     if not text:
         return text
 
-    # 6시간 마다 -> 6시간마다
     text = re.sub(r"(\d+\s*시간)\s+마다", r"\1마다", text)
     text = re.sub(r"(\d+\s*일)\s+마다", r"\1마다", text)
     text = re.sub(r"(\d+\s*분)\s+마다", r"\1마다", text)
-
-    # 1편 기다리면 무료 / 1화 기다리면 무료 형태 정리
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def unique_dict_list(items: List[Dict[str, Any]], key_fields: List[str]) -> List[Dict[str, Any]]:
     seen = set()
     result = []
+
     for item in items:
         key = tuple(item.get(k, "") for k in key_fields)
         if key in seen:
             continue
         seen.add(key)
         result.append(item)
+
     return result
+
+
+def normalize_count_text(value: str) -> Optional[str]:
+    text = clean_text(value)
+    if not text or text == "-":
+        return None
+
+    if text.endswith("만"):
+        n = float(text[:-1].replace(",", "").strip() or 0)
+        return str(int(round(n * 10000)))
+
+    m = re.search(r"\d[\d,]*", text)
+    if not m:
+        return None
+
+    return m.group(0).replace(",", "")
+
+
+def parse_ridi_comment_count(soup: BeautifulSoup) -> str:
+    body_text = clean_text(soup.get_text(" ", strip=True))
+
+    patterns = [
+        r"구매자\s*([\d,]+(?:\.\d+)?\s*만?)\s*전체\s*[\d,]+",
+        r"구매자\s*([\d,]+(?:\.\d+)?\s*만?)",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, body_text, flags=re.IGNORECASE)
+        if not m:
+            m = re.search(pattern, str(soup), flags=re.IGNORECASE)
+        if m:
+            normalized = normalize_count_text(m.group(1))
+            if normalized:
+                return normalized
+
+    return "-"
 
 
 def parse_ridi_promotion(item) -> Optional[Dict]:
@@ -77,7 +129,9 @@ def parse_ridi_promotion(item) -> Optional[Dict]:
         "exclusiveText": None,
     }
 
-    thumb_link = item.select_one("a.fig-1q776eq, a.fig-1q776eq.e1ftn9sh1, a.fig-w1hthz")
+    thumb_link = item.select_one(
+        "a.fig-1q776eq, a.fig-1q776eq.e1ftn9sh1, a.fig-w1hthz"
+    )
     if not thumb_link:
         return None
 
@@ -125,18 +179,12 @@ def extract_row_header_text(row) -> str:
 def parse_notice_titles(row) -> List[Dict[str, Any]]:
     notices = []
 
-    # 공지 제목 버튼만 수집
-    # 원본 기준 제목 버튼은 화살표가 붙은 첫 번째 버튼이고,
-    # 본문 버튼은 뒤쪽의 긴 설명문 버튼이라 제외한다.
     for btn in row.select("button"):
         text = clean_text(btn.get_text(" ", strip=True))
         if not text:
             continue
-
         if text in {"공지 더보기", "더 보기"}:
             continue
-
-        # 본문성 긴 문장 제외
         if len(text) > 60:
             continue
         if text.endswith("부탁드립니다."):
@@ -161,32 +209,27 @@ def parse_benefits(row) -> List[Dict[str, Any]]:
         title = None
         subtitle = None
 
-        # 제목 후보
-        title_candidates = [
+        for sel in [
             "span.rigrid-ke9tut",
             "a > div div span.rigrid-ke9tut",
             "a div span.rigrid-ke9tut",
-        ]
-        for sel in title_candidates:
+        ]:
             el = li.select_one(sel)
             if el:
                 title = clean_text(el.get_text(" ", strip=True))
                 if title:
                     break
 
-        # 보조 설명 후보
-        subtitle_candidates = [
+        for sel in [
             "div.rigrid-1tf5hrm",
             "div.rigrid-jpipff",
-        ]
-        for sel in subtitle_candidates:
+        ]:
             el = li.select_one(sel)
             if el:
                 subtitle = clean_text(el.get_text(" ", strip=True))
                 if subtitle:
                     break
 
-        # 셀렉터가 깨질 때를 대비한 fallback
         if not title:
             texts = [
                 clean_text(x.get_text(" ", strip=True))
@@ -212,11 +255,13 @@ def parse_benefits(row) -> List[Dict[str, Any]]:
 
 def parse_event_banners(row) -> List[Dict[str, Any]]:
     events = []
-    for a in row.select('a[href]'):
+
+    for a in row.select("a[href]"):
         text = clean_text(a.get_text(" ", strip=True))
         if not text:
             continue
         events.append({"title": text})
+
     return unique_dict_list(events, ["title"])
 
 
@@ -241,45 +286,12 @@ def parse_ridamu_text(row) -> Optional[str]:
     text = clean_text(row.get_text(" ", strip=True))
     if not text:
         return None
+
     text = re.sub(r"^리다무\s*", "", text).strip()
     text = re.sub(r"무료 이용 가능$", "", text).strip()
     text = normalize_ridamu_text(text)
+
     return text or None
-
-
-def normalize_count_text(value: str) -> Optional[str]:
-    text = clean_text(value)
-    if not text or text == "-":
-        return None
-
-    if text.endswith("\uB9CC"):
-        n = float(text[:-1].replace(",", "").strip() or 0)
-        return str(int(round(n * 10000)))
-
-    m = re.search(r"\d[\d,]*", text)
-    if not m:
-        return None
-
-    return m.group(0).replace(",", "")
-
-
-def parse_ridi_comment_count(soup: BeautifulSoup) -> str:
-    body_text = clean_text(soup.get_text(" ", strip=True))
-    patterns = [
-        r"\uAD6C\uB9E4\uC790\s*([\d,]+(?:\.\d+)?\s*\uB9CC?)\s*\uC804\uCCB4\s*[\d,]+",
-        r"\uAD6C\uB9E4\uC790\s*([\d,]+(?:\.\d+)?\s*\uB9CC?)",
-    ]
-
-    for pattern in patterns:
-        m = re.search(pattern, body_text, flags=re.IGNORECASE)
-        if not m:
-            m = re.search(pattern, str(soup), flags=re.IGNORECASE)
-        if m:
-            normalized = normalize_count_text(m.group(1))
-            if normalized:
-                return normalized
-
-    return "-"
 
 
 def parse_ridi_detail_promotion(work_url: str) -> Optional[Dict]:
@@ -303,6 +315,7 @@ def parse_ridi_detail_promotion(work_url: str) -> Optional[Dict]:
     }
 
     rows = soup.select('[role="row"]')
+
     for row in rows:
         header = extract_row_header_text(row)
         if not header:
@@ -402,10 +415,34 @@ def merge_ridi_promotion(base: Optional[Dict], detail: Optional[Dict]) -> Option
     return merged if has_any else None
 
 
+def extract_rank_from_card(item) -> tuple[str, bool]:
+    full_text = item.get_text(" ", strip=True)
+    m_rank = re.match(r"^(\d+)\s+", full_text)
+
+    if m_rank:
+        return f"{int(m_rank.group(1))}위", False
+
+    return "프로모션", True
+
+
+def parse_rating_and_count(item) -> tuple[str, str]:
+    full_text = item.get_text(" ", strip=True)
+    m = re.search(r"(\d(?:\.\d)?)\s*\(\s*([\d,]+)\s*\)", full_text)
+
+    if m:
+        return m.group(1), m.group(2)
+
+    return "-", "-"
+
+
 def parse_list(list_url: str, category_key: str):
     soup = fetch_html(list_url)
 
-    cards = soup.select("li.fig-1m9tqaj")
+    cards = [
+        li for li in soup.select("li")
+        if li.select_one("a.fig-w1hthz")
+    ]
+
     results = []
 
     for item in cards:
@@ -413,17 +450,14 @@ def parse_list(list_url: str, category_key: str):
         if not title_tag:
             continue
 
-        title = title_tag.get_text(strip=True)
+        title = clean_text(title_tag.get_text(" ", strip=True))
 
         work_path = title_tag.get("href", "")
         work_url = ""
         work_id = ""
 
         if work_path:
-            if work_path.startswith("/"):
-                work_url = BASE_URL + work_path
-            else:
-                work_url = work_path
+            work_url = BASE_URL + work_path if work_path.startswith("/") else work_path
 
             m_id = re.search(r"/books/(\d+)", work_path)
             if m_id:
@@ -432,11 +466,12 @@ def parse_list(list_url: str, category_key: str):
         author_tag = item.select_one("a.fig-103urjl.e1s6unbg0")
         publisher_tag = item.select_one("a.fig-103urjl.efs2tg41")
 
-        author = author_tag.get_text(strip=True) if author_tag else "-"
-        publisher = publisher_tag.get_text(strip=True) if publisher_tag else "-"
+        author = clean_text(author_tag.get_text(" ", strip=True)) if author_tag else "-"
+        publisher = clean_text(publisher_tag.get_text(" ", strip=True)) if publisher_tag else "-"
 
         genre_tag = item.select_one("span.fig-gcx8hj.e1g90d6s0")
-        sub_genre = genre_tag.get_text(strip=True) if genre_tag else "-"
+        sub_genre = clean_text(genre_tag.get_text(" ", strip=True)) if genre_tag else "-"
+        sub_genre = re.sub(r"^\d+\s*", "", sub_genre).strip()
 
         if category_key == "romance":
             main_genre = "로맨스"
@@ -452,39 +487,16 @@ def parse_list(list_url: str, category_key: str):
             genre = sub_genre or "웹소설"
 
         total_ep_tag = item.select_one("span.fig-w746bu span")
-        total_episodes = total_ep_tag.get_text(strip=True) if total_ep_tag else "-"
+        total_episodes = clean_text(total_ep_tag.get_text(" ", strip=True)) if total_ep_tag else "-"
 
-        rating = "-"
-        ridi_rating_count = "-"
+        rating, ridi_rating_count = parse_rating_and_count(item)
+        rank_value, is_promotion = extract_rank_from_card(item)
 
-        rating_block = item.select_one("span.fig-mhc4m4.enp6wb0")
-        if rating_block:
-            texts = [t for t in rating_block.stripped_strings]
-            if texts:
-                rating = texts[0]
-
-        rating_count_span = item.select_one("span.fig-1d0qko5.enp6wb2")
-        if rating_count_span:
-            raw_count = "".join(rating_count_span.stripped_strings)
-            raw_count = raw_count.strip("()")
-            ridi_rating_count = raw_count if raw_count else "-"
-
-        badge = item.select_one("div.fig-ty289v")
-        is_promotion = False
-        rank_value = "-"
-        if badge:
-            badge_text = badge.get_text(strip=True)
-            if badge_text.isdigit():
-                rank_value = f"{int(badge_text)}위"
-            else:
-                if badge.select_one("svg"):
-                    is_promotion = True
-                    rank_value = "프로모션"
-
-        if work_id:
-            thumbnail_url = f"https://img.ridicdn.net/cover/{work_id}/large#1"
-        else:
-            thumbnail_url = "-"
+        thumbnail_url = (
+            f"https://img.ridicdn.net/cover/{work_id}/large#1"
+            if work_id
+            else "-"
+        )
 
         base_promotion = parse_ridi_promotion(item)
         detail_promotion = parse_ridi_detail_promotion(work_url) if work_url else None
@@ -510,6 +522,7 @@ def parse_list(list_url: str, category_key: str):
             "thumbnail": thumbnail_url,
             "url": work_url,
         }
+
         if promotion:
             result["promotion"] = promotion
 
@@ -520,19 +533,23 @@ def parse_list(list_url: str, category_key: str):
 
 def run_ridi():
     all_results = []
+
     for key, url in CATEGORY_URLS.items():
         try:
             items = parse_list(url, key)
             all_results.extend(items)
         except Exception as e:
             print(f"❌ 리디 {key} 에러: {e}")
+
     return all_results
 
 
 def build_ridi_promotion_payload(raw_items):
-    today = (datetime.datetime.utcnow() + datetime.timedelta(hours=9)).strftime("%Y-%m-%d")
+    today = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=9)
+    today_str = today.strftime("%Y-%m-%d")
+
     return {
-        "date": today,
+        "date": today_str,
         "platform": "ridi",
         "items": [
             {
@@ -560,7 +577,14 @@ if __name__ == "__main__":
     items = run_ridi()
 
     for x in items[:30]:
-        if "promotion" in x:
-            print("PROMO:", x["카테고리"], x["title"], "=>", x["promotion"])
+        print(
+            x.get("카테고리"),
+            x.get("rank"),
+            "PROMO" if x.get("is_promotion") else "",
+            x.get("title"),
+            x.get("author"),
+            x.get("genre"),
+            x.get("ridi_rating_count"),
+        )
 
     save_ridi_promotions_json(items)
