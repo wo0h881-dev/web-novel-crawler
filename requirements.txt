@@ -1,2 +1,4 @@
 gspread
 playwright
+beautifulsoup4
+requests
