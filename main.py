@@ -271,65 +271,55 @@ def run_kakao_realtime_rank():
 
                     print("PUB:", publisher)
 
-                    # 7) 평점
+              
+                    # 7) 상세페이지 전체 텍스트
+                    detail_text = d_page.locator("body").inner_text()
+
+                    # 8) 평점
                     rating = "-"
-                    rating_el = d_page.locator(
-                        'img[alt="별점"] + span.text-el-70.opacity-70'
-                    )
-                    if rating_el.count() > 0:
-                        rating = rating_el.inner_text().strip()
-
-                    # 8) 다시 홈 탭으로 이동
                     try:
-                        home_tab = d_page.locator(
-                            "span.font-small1",
-                            has_text="홈",
-                        ).first
-                        if home_tab.count() > 0:
-                            home_tab.click()
-                            d_page.wait_for_timeout(800)
+                        m_rating = re.search(
+                            r"별점\s*([\d.]+)",
+                            detail_text,
+                        )
+                        if m_rating:
+                            rating = m_rating.group(1)
                     except Exception as e:
-                        print("HOME_TAB_ERR:", e)
+                        print("RATING_ERR:", e)
 
-                    # 9) 총 회차수 & 댓글 수
+                    # 9) 총 회차수
                     total_episodes = "-"
-                    comments = "-"
-
                     try:
-                        # 회차수 컨테이너 (첫 번째)
-                        episode_container = d_page.locator(
-                            "div.flex.h-full.flex-1.items-center.space-x-8pxr"
-                        ).first
-                        if episode_container.count() > 0:
-                            ep_text_el = episode_container.locator(
-                                "span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70"
-                            ).first
-                            if ep_text_el.count() > 0:
-                                ep_text = ep_text_el.inner_text().strip()
-                                m = re.search(r"(\d[\d,]*)", ep_text)
-                                if m:
-                                    num = m.group(1).replace(",", "")
-                                    total_episodes = f"{num}화"
-
-                        # 댓글 컨테이너 (두 번째)
-                        comment_container = d_page.locator(
-                            "div.flex.h-full.flex-1.items-center.space-x-8pxr"
-                        ).nth(1)
-                        if comment_container.count() > 0:
-                            c_text_el = comment_container.locator(
-                                "span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-el-70"
-                            ).first
-                            if c_text_el.count() > 0:
-                                c_text = c_text_el.inner_text().strip()
-                                m2 = re.search(r"([\d.,]+)", c_text)
-                                if m2:
-                                    core = m2.group(1)
-                                    if "만" in c_text:
-                                        comments = core + "만"
-                                    else:
-                                        comments = core.replace(",", "")
+                        m_ep = re.search(
+                            r"총\s*([\d,]+)\s*화",
+                            detail_text,
+                        )
+                        if m_ep:
+                            total_episodes = (
+                                f"{m_ep.group(1).replace(',', '')}화"
+                            )
                     except Exception as e:
-                        print("EP/COMMENT_ERR:", e)
+                        print("EP_ERR:", e)
+
+                    # 10) 댓글 수
+                    comments = "-"
+                    try:
+                        m_comment = re.search(
+                            r"댓글\s*([\d.,]+)(만)?",
+                            detail_text,
+                        )
+
+                        if m_comment:
+                            num = m_comment.group(1)
+
+                            if m_comment.group(2):
+                                comments = f"{num}만"
+                            else:
+                                comments = num.replace(",", "")
+                    except Exception as e:
+                        print("COMMENT_ERR:", e)
+
+
 
                     # 10) 프로모션 정보
                     time_free_type = extract_time_free_type(d_page)
