@@ -260,19 +260,21 @@ def run_kakao_realtime_rank():
                             "span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-theme-solid-100"
                         ).all_inner_texts()
 
-                        print("🧪 TOTAL_TEXTS:", total_texts)
+                      
 
-                        overall_nums = []
+                        overall_values = []
                         for text in total_texts:
-                            m = re.search(r"전체\s*([\d,]+)", text.strip())
+                            m = re.search(r"전체\s*([\d,.]+(?:만|천)?)", text.strip())
                             if m:
-                                overall_nums.append(m.group(1).replace(",", ""))
+                                overall_values.append(m.group(1).strip())
+                                
+                        if len(overall_values) >= 1:
+                            # 회차수는 숫자만 사용
+                            total_episodes = f"{overall_values[0].replace(',', '')}화"
 
-                        if len(overall_nums) >= 1:
-                            total_episodes = f"{overall_nums[0]}화"
-
-                        if len(overall_nums) >= 2:
-                            comments = overall_nums[1]
+                        if len(overall_values) >= 2:
+                            # 댓글수는 네이버처럼 원문 유지
+                            comments = overall_values[1]
 
                     except Exception as e:
                         print("KAKAO_META_ERR:", e)
