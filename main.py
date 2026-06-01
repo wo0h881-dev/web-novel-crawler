@@ -237,6 +237,46 @@ def run_kakao_realtime_rank():
                     except Exception as e:
                          print("❌ VIEWS_ERR:", e)
 
+
+                    # 4-1) 평점 / 총회차수 / 댓글수
+                    rating = "-"
+                    total_episodes = "-"
+                    comments = "-"
+
+                    try:
+                        # 평점: VIEW_CANDIDATES 안의 9.8 같은 값
+                        for t in candidates:
+                            t = t.strip()
+                            if re.fullmatch(r"\d+(?:\.\d+)?", t):
+                                n = float(t)
+                                if 0 <= n <= 10:
+                                    rating = t
+                                    break
+
+                        # 카카오 홈 탭 기준:
+                        # 첫 번째 "전체 N" = 총 회차수
+                        # 두 번째 "전체 N" = 댓글수
+                        total_texts = d_page.locator(
+                            "span.text-ellipsis.break-all.line-clamp-1.font-small2-bold.text-theme-solid-100"
+                        ).all_inner_texts()
+
+                        print("🧪 TOTAL_TEXTS:", total_texts)
+
+                        overall_nums = []
+                        for text in total_texts:
+                            m = re.search(r"전체\s*([\d,]+)", text.strip())
+                            if m:
+                                overall_nums.append(m.group(1).replace(",", ""))
+
+                        if len(overall_nums) >= 1:
+                            total_episodes = f"{overall_nums[0]}화"
+
+                        if len(overall_nums) >= 2:
+                            comments = overall_nums[1]
+
+                    except Exception as e:
+                        print("KAKAO_META_ERR:", e)
+
                     
                     # 5) 정보 탭으로 이동 (발행자용)
                     try:
@@ -272,53 +312,7 @@ def run_kakao_realtime_rank():
                     print("PUB:", publisher)
 
               
-                    # 7) 상세페이지 전체 텍스트
-                    detail_text = d_page.locator("body").inner_text()
-
-                    # 8) 평점
-                    rating = "-"
-                    try:
-                        m_rating = re.search(
-                            r"별점\s*([\d.]+)",
-                            detail_text,
-                        )
-                        if m_rating:
-                            rating = m_rating.group(1)
-                    except Exception as e:
-                        print("RATING_ERR:", e)
-
-                    # 9) 총 회차수
-                    total_episodes = "-"
-                    try:
-                        m_ep = re.search(
-                            r"총\s*([\d,]+)\s*화",
-                            detail_text,
-                        )
-                        if m_ep:
-                            total_episodes = (
-                                f"{m_ep.group(1).replace(',', '')}화"
-                            )
-                    except Exception as e:
-                        print("EP_ERR:", e)
-
-                    # 10) 댓글 수
-                    comments = "-"
-                    try:
-                        m_comment = re.search(
-                            r"댓글\s*([\d.,]+)(만)?",
-                            detail_text,
-                        )
-
-                        if m_comment:
-                            num = m_comment.group(1)
-
-                            if m_comment.group(2):
-                                comments = f"{num}만"
-                            else:
-                                comments = num.replace(",", "")
-                    except Exception as e:
-                        print("COMMENT_ERR:", e)
-
+                    
 
 
                     # 10) 프로모션 정보
